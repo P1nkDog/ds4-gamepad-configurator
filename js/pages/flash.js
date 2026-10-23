@@ -9,14 +9,29 @@
 
 import { renderTabBar, setActiveTab } from '../components/tabs.js';
 import { showMessage } from '../components/dialog.js';
+import { parseFirmware } from '../format.js';
 
 const APP_VERSION = 'v1.0.0';
+
+// 在线烧录：只读站点 firmware/ 目录下的固件清单（同源，无 CORS）
+// 固件由 tools/sync_firmware.py 从 GitHub Release 同步进来，页面不直接访问 GitHub
+const FIRMWARE_DIR = 'firmware';
+const MANIFEST_URL = `${FIRMWARE_DIR}/manifest.json`;
+
+// 刷新按钮图标（细线旋转箭头）
+const REFRESH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <polyline points="21 4 21 9.5 15.5 9.5"></polyline>
+    <path d="M18.9 15a7.5 7.5 0 1 1-1.77-7.8L21 9.5"></path>
+</svg>`;
 
 let containerRef = null;
 let connected = false;
 let flasher = null;
 let chipInfo = null;
 let currentFlashTab = 'local';
+let firmwareCache = null;          // 固件清单数组（来自 firmware/manifest.json）
+let selectedFirmwareFile = null;   // 当前选中的固件文件名
 
 // 日志（跨渲染保留）
 const logLines = [];
@@ -132,6 +147,11 @@ async function handleFlash() {
         return;
     }
 
+    if (currentFlashTab === 'online') {
+        await handleOnlineFlash();
+        return;
+    }
+
     const fileInput = document.getElementById('firmware-file');
     const file = fileInput && fileInput.files[0];
     if (!file) {
@@ -139,12 +159,7 @@ async function handleFlash() {
         return;
     }
 
-    const options = {
-        erase: getOptionChecked('opt-erase', true),
-        verify: getOptionChecked('opt-verify', true),
-        reset: getOptionChecked('opt-reset', true),
-        unprotect: getOptionChecked('opt-unprotect', false),
-    };
+    const options = readFlashOptions();
 
     const flashBtn = document.getElementById('btn-flash');
     const statusEl = document.getElementById('flash-status');
@@ -302,9 +317,7 @@ function renderFlashGuide(contentEl) {
                 <b>烧录完成后，请把 BOOT1 拨回 0 再重新上电，设备才会以新固件正常启动。</b>
             </div>
         </div>
-        <div class="log-area" id="flash-log"></div>
     `;
-    renderLog();
 }
 
 /**
@@ -317,7 +330,9 @@ function renderLocalTab(contentEl) {
             <div class="file-input-wrapper">
                 <input type="file" id="firmware-file" accept=".bin,.hex,.elf">
                 <label for="firmware-file" class="file-input-label">选择文件</label>
-                <span class="file-name" id="file-name">未选择文件（支持 .bin / .hex / .elf）</span>
+            </div>
+            <div class="local-file-card" id="local-file-card">
+                <div class="release-hint">未选择文件（支持 .bin / .hex / .elf）</div>
             </div>
             <div class="flash-options">
                 <label class="flash-option"><input type="checkbox" id="opt-erase" checked><span>擦除</span></label>
@@ -331,30 +346,399 @@ function renderLocalTab(contentEl) {
         <div class="log-area" id="flash-log"></div>
     `;
 
-    // 文件选择显示文件名
     const fileInput = document.getElementById('firmware-file');
     fileInput.addEventListener('change', () => {
-        const nameEl = document.getElementById('file-name');
-        if (nameEl) {
-            nameEl.textContent = fileInput.files[0]
-                ? `已选择: ${fileInput.files[0].name}`
-                : '未选择文件';
-        }
+        renderLocalFileCard(fileInput.files[0]);
     });
 
     renderLog();
 }
 
 /**
- * 在线烧录（待完善）
+ * 本地烧录：把已选文件渲染成与在线烧录一致的固件卡片
+ */
+function renderLocalFileCard(file) {
+    const box = document.getElementById('local-file-card');
+    if (!box) return;
+
+    if (!file) {
+        box.innerHTML = '<div class="release-hint">未选择文件（支持 .bin / .hex / .elf）</div>';
+        return;
+    }
+
+    const fw = {
+        tag: parseTagFromFileName(file.name),
+        name: '',
+        publishedAt: formatFileDate(file.lastModified),
+        fileName: file.name,
+        size: file.size,
+        prerelease: false,
+    };
+
+    box.innerHTML = '';
+    const item = document.createElement('div');
+    item.className = 'release-item release-item-static selected';
+    item.appendChild(buildFirmwareInfo(fw));
+    box.appendChild(item);
+}
+
+/**
+ * 在线烧录：读取站点 firmware/ 目录
  */
 function renderOnlineTab(contentEl) {
     contentEl.innerHTML = `
         <div class="section-card">
             <h3>在线烧录</h3>
-            <p class="placeholder-text">待完善（从服务器下载固件并烧录）</p>
+            <div class="online-repo">
+                <span>固件来源：<b>${FIRMWARE_DIR}/</b></span>
+                <button class="btn-ghost" id="btn-gh-refresh" title="重新读取固件列表">${REFRESH_SVG}<span>刷新固件</span></button>
+            </div>
+            <div class="release-list" id="gh-release-list">
+                <div class="release-hint">正在读取固件列表…</div>
+            </div>
+            <div class="flash-options">
+                <label class="flash-option"><input type="checkbox" id="opt-erase" checked><span>擦除</span></label>
+                <label class="flash-option"><input type="checkbox" id="opt-verify" checked><span>校验</span></label>
+                <label class="flash-option"><input type="checkbox" id="opt-reset" checked><span>重置</span></label>
+                <label class="flash-option"><input type="checkbox" id="opt-unprotect"><span>解除保护</span></label>
+            </div>
+            <div class="status-line" id="flash-status">状态: 就绪</div>
+            <div class="progress-track"><div class="progress-bar" id="flash-progress"></div></div>
         </div>
+        <div class="log-area" id="flash-log"></div>
     `;
+
+    renderLog();
+
+    const refreshBtn = document.getElementById('btn-gh-refresh');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            refreshBtn.disabled = true;
+            refreshBtn.classList.add('is-loading');
+            try {
+                await loadFirmwareList(true);
+            } finally {
+                refreshBtn.classList.remove('is-loading');
+                refreshBtn.disabled = false;
+            }
+        });
+    }
+
+    loadFirmwareList(false);
+}
+
+/**
+ * 读取并渲染固件列表
+ * @param {boolean} force - 是否跳过缓存
+ */
+async function loadFirmwareList(force) {
+    const listEl = document.getElementById('gh-release-list');
+    if (!listEl) return;
+
+    if (force) {
+        firmwareCache = null;
+        listEl.innerHTML = '<div class="release-hint">正在读取固件列表…</div>';
+    }
+
+    try {
+        const list = await fetchFirmwares(force);
+        renderFirmwareList(listEl, list);
+    } catch (err) {
+        listEl.innerHTML = `<div class="release-hint release-hint-error">固件列表加载失败：${escapeHtml(err.message || String(err))}，可稍后点「刷新固件」重试。</div>`;
+        console.warn('[在线烧录] 读取固件列表出错', err);
+    }
+}
+
+/**
+ * 从文件名推断版本号（与 tools/sync_firmware.py 规则一致）
+ */
+function parseTagFromFileName(name) {
+    const m = /[vV](\d+(?:\.\d+){1,3})/.exec(name);
+    if (m) return `v${m[1]}`;
+    return name.replace(/\.[^.]+$/, '');
+}
+
+function formatFileDate(ms) {
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * 格式角标（BIN / HEX / ELF）
+ */
+function createFormatBadge(fileName) {
+    const ext = (fileName.split('.').pop() || '').toUpperCase();
+    if (!['BIN', 'HEX', 'ELF'].includes(ext)) return null;
+    const badge = document.createElement('span');
+    badge.className = 'release-badge release-badge-fmt';
+    badge.textContent = ext;
+    return badge;
+}
+
+/**
+ * 构建固件信息块（在线列表与本地文件共用）
+ * @param {{tag:string, name?:string, publishedAt?:string, fileName:string, size:number, prerelease?:boolean}} fw
+ * @param {{isLatest?:boolean}} opts
+ */
+function buildFirmwareInfo(fw, opts = {}) {
+    const info = document.createElement('div');
+    info.className = 'release-info';
+
+    const title = document.createElement('div');
+    title.className = 'release-title';
+    title.textContent = fw.tag;
+
+    const fmt = createFormatBadge(fw.fileName);
+    if (fmt) title.appendChild(fmt);
+
+    if (opts.isLatest) {
+        const badge = document.createElement('span');
+        badge.className = 'release-badge';
+        badge.textContent = '最新';
+        title.appendChild(badge);
+    }
+    if (fw.prerelease) {
+        const badge = document.createElement('span');
+        badge.className = 'release-badge release-badge-pre';
+        badge.textContent = '预发布';
+        title.appendChild(badge);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'release-meta';
+    const parts = [];
+    if (fw.name && fw.name !== fw.tag) parts.push(fw.name);
+    if (fw.publishedAt) parts.push(fw.publishedAt);
+    if (fw.fileName) parts.push(fw.fileName);
+    if (fw.size) parts.push(formatBytes(fw.size));
+    meta.textContent = parts.join(' · ');
+
+    info.appendChild(title);
+    info.appendChild(meta);
+    return info;
+}
+
+function renderFirmwareList(listEl, list) {
+    if (!list.length) {
+        listEl.innerHTML = '<div class="release-hint">暂无可用固件，请稍后点「刷新固件」重试。</div>';
+        console.warn(`[在线烧录] ${MANIFEST_URL} 里没有可用条目`);
+        return;
+    }
+
+    listEl.innerHTML = '';
+
+    list.forEach((fw, index) => {
+        const item = document.createElement('label');
+        item.className = 'release-item';
+
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'fw-release';
+        radio.value = fw.fileName;
+        radio.checked = fw.fileName === selectedFirmwareFile
+            || (!selectedFirmwareFile && index === 0);
+        if (radio.checked) selectedFirmwareFile = fw.fileName;
+        radio.addEventListener('change', () => {
+            selectedFirmwareFile = fw.fileName;
+            renderFirmwareSelection();
+        });
+
+        item.appendChild(radio);
+        item.appendChild(buildFirmwareInfo(fw, { isLatest: index === 0 }));
+        listEl.appendChild(item);
+    });
+
+    renderFirmwareSelection();
+}
+
+function renderFirmwareSelection() {
+    document.querySelectorAll('#gh-release-list .release-item').forEach((el) => {
+        const radio = el.querySelector('input[type="radio"]');
+        el.classList.toggle('selected', !!(radio && radio.checked));
+    });
+}
+
+/**
+ * 取固件列表（只读站点 firmware/manifest.json）
+ * @returns {Promise<Array>}
+ */
+async function fetchFirmwares(force) {
+    if (firmwareCache && !force) return firmwareCache;
+    firmwareCache = await fetchLocalManifest();
+    return firmwareCache;
+}
+
+/**
+ * 读站点 firmware/manifest.json
+ */
+async function fetchLocalManifest() {
+    const res = await fetch(MANIFEST_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`清单 HTTP ${res.status}`);
+
+    const data = await res.json();
+    const list = Array.isArray(data.firmwares) ? data.firmwares : [];
+
+    return list
+        .filter((f) => f && f.tag && f.file)
+        .map((f) => ({
+            tag: String(f.tag),
+            name: f.name || String(f.tag),
+            publishedAt: f.date || '',
+            fileName: String(f.file),
+            size: Number(f.size) || 0,
+            sha256: String(f.sha256 || '').toLowerCase(),
+            prerelease: !!f.prerelease,
+        }));
+}
+
+/**
+ * 读取选中固件（站点同源），返回 Uint8Array
+ */
+async function downloadFirmware(fw) {
+    const url = `./${FIRMWARE_DIR}/${encodeURIComponent(fw.fileName)}?v=${encodeURIComponent(fw.tag)}`;
+    appendLog(`正在读取固件 ${fw.tag}…`);
+
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+        console.warn(`[在线烧录] 固件读取失败 ${url}`, res.status);
+        throw new Error(`固件读取失败（HTTP ${res.status}）`);
+    }
+
+    const bytes = await readBodyWithProgress(res, fw.size);
+
+    if (fw.size && bytes.length !== fw.size) {
+        throw new Error(`固件长度不符：期望 ${fw.size} 字节，实际 ${bytes.length} 字节`);
+    }
+    if (fw.sha256) {
+        const actual = await sha256Hex(bytes);
+        if (actual !== fw.sha256) {
+            console.warn(`[在线烧录] SHA-256 不匹配 expect=${fw.sha256} actual=${actual}`);
+            throw new Error('固件校验失败，请刷新后重试');
+        }
+    }
+    return bytes;
+}
+
+async function sha256Hex(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * 流式读取响应体，同时更新下载进度
+ */
+async function readBodyWithProgress(res, expectedSize) {
+    const total = Number(res.headers.get('content-length')) || expectedSize || 0;
+
+    if (!res.body) {
+        return new Uint8Array(await res.arrayBuffer());
+    }
+
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+
+        const bar = document.getElementById('flash-progress');
+        const statusEl = document.getElementById('flash-status');
+        if (bar && total > 0) bar.style.width = `${((received / total) * 100).toFixed(1)}%`;
+        if (statusEl) {
+            statusEl.textContent = `状态: 下载中 ${formatBytes(received)}` + (total ? ` / ${formatBytes(total)}` : '');
+        }
+    }
+
+    const out = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return out;
+}
+
+/**
+ * 在线烧录：读取站点固件并烧录
+ */
+async function handleOnlineFlash() {
+    const statusEl = document.getElementById('flash-status');
+    const flashBtn = document.getElementById('btn-flash');
+
+    if (!firmwareCache || !firmwareCache.length) {
+        await showMessage('提示', '暂无可用固件，请稍后点「刷新固件」重试');
+        return;
+    }
+
+    if (!selectedFirmwareFile) {
+        await showMessage('提示', '请先选择一个固件版本');
+        return;
+    }
+    const fw = firmwareCache.find((f) => f.fileName === selectedFirmwareFile);
+    if (!fw) {
+        await showMessage('提示', '版本信息已失效，请点「刷新固件」重试');
+        return;
+    }
+
+    try {
+        if (flashBtn) { flashBtn.disabled = true; flashBtn.textContent = '烧录中...'; }
+        if (statusEl) statusEl.textContent = `状态: 读取 ${fw.tag} 固件`;
+
+        const bytes = await downloadFirmware(fw);
+        appendLog(`固件就绪: ${fw.fileName}（${formatBytes(bytes.length)}）`);
+
+        // 必须带文件名解析：否则 .hex 会被当成裸二进制写入
+        const image = parseFirmware(bytes, fw.fileName);
+        appendLog(`解析格式: ${image.format}，基地址 0x${(image.baseAddress || 0).toString(16)}`);
+
+        if (statusEl) statusEl.textContent = '状态: 烧录中';
+        lastPhase = '';
+        lastMilestone = -1;
+        await flasher.flash(image, readFlashOptions());
+
+        if (statusEl) statusEl.textContent = '状态: 烧录完成';
+        appendLog('烧录完成');
+        await showMessage('烧录完成', `${fw.tag} 固件烧录成功，设备已重置。`);
+        await handleDisconnect();
+    } catch (err) {
+        if (statusEl) statusEl.textContent = '状态: 烧录失败';
+        appendLog(`烧录失败: ${err.message || err}`, true);
+        await showMessage('烧录失败', err.message || String(err));
+    } finally {
+        if (flashBtn) { flashBtn.disabled = false; flashBtn.textContent = '烧录'; }
+    }
+}
+
+/**
+ * 读取烧录选项
+ */
+function readFlashOptions() {
+    return {
+        erase: getOptionChecked('opt-erase', true),
+        verify: getOptionChecked('opt-verify', true),
+        reset: getOptionChecked('opt-reset', true),
+        unprotect: getOptionChecked('opt-unprotect', false),
+    };
+}
+
+function formatBytes(n) {
+    if (!n) return '0 B';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 function buildStatusBar() {

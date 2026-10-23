@@ -1,0 +1,16 @@
+{
+  "updated": "2026-10-23T23:22:13+08:00",
+  "repo": "P1nkDog/8khz-ds4-gamepad-ch32v307",
+  "firmwares": [
+    {
+      "tag": "v0.1.0",
+      "name": "v0.1.0",
+      "file": "8khz-ds4-gamepad-ch32v307-V0.1.0.hex",
+      "size": 75880,
+      "sha256": "c9336cab10898f256429804a96a82ef9554754a9e1306d1552a580a5cd5612f7",
+      "date": "2026-10-23",
+      "notes": "",
+      "prerelease": false
+    }
+  ]
+}

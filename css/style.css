@@ -484,9 +484,54 @@ body {
   transform: none;
 }
 
-.btn-sm {
-  padding: 0.35em 0.9em;
-  font-size: 13px;
+/* 幽灵按钮（扁平淡边框胶囊，用于卡片内的次要操作，如刷新版本） */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-primary);
+}
+
+.btn-ghost:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-ghost svg {
+  display: block;
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.btn-ghost.is-loading svg {
+  animation: btn-ghost-spin 0.8s linear infinite;
+}
+
+@keyframes btn-ghost-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* GitHub 3D 翻转按钮 */
@@ -572,12 +617,6 @@ body {
 [data-theme="dark"] .sidebar-logo img,
 [data-theme="dark"] .welcome-logo img {
   filter: none;
-}
-
-.welcome-title {
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--text-primary);
 }
 
 .welcome-buttons {
@@ -766,6 +805,131 @@ body {
   padding-bottom: 10px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 在线烧录：GitHub 版本列表 */
+.online-repo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.online-repo code {
+  background: var(--bg-primary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.release-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  max-height: 268px;
+  overflow-y: auto;
+}
+
+.release-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.release-item:hover {
+  border-color: var(--accent);
+}
+
+.release-item.selected {
+  border-color: var(--accent);
+  background: var(--bg-primary);
+}
+
+.release-item input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.release-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.release-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.release-meta {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.release-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.release-badge-pre {
+  background: var(--warning);
+}
+
+.release-badge-fmt {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.release-hint {
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+
+.release-hint code {
+  background: var(--bg-primary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.release-hint-error {
+  color: var(--danger);
+}
+
+.local-file-card {
+  margin-bottom: 16px;
+}
+
+/* 本地文件卡片：只展示信息，不可点选 */
+.release-item-static {
+  cursor: default;
+}
+
+.release-item-static:hover {
+  border-color: var(--border);
 }
 
 /* 提示条 */
@@ -1074,11 +1238,6 @@ body {
   color: var(--accent);
 }
 
-.file-name {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
 .flash-options {
   display: flex;
   gap: 20px;
@@ -1122,28 +1281,12 @@ body {
   word-break: break-all;
 }
 
-.log-area .log-entry.log-tx {
-  color: var(--success);
-}
-
-.log-area .log-entry.log-rx {
-  color: var(--accent);
-}
-
 .log-area .log-entry.log-err {
   color: var(--danger);
 }
 
 .log-area .log-entry.log-info {
   color: var(--text-secondary);
-}
-
-/* 连接方式选择 */
-.connect-type-box {
-  margin-top: 16px;
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
 }
 
 /* 烧录状态与进度条 */

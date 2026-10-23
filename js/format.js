@@ -3,6 +3,9 @@
  * 移植自 wchisp-web/src/format.ts
  */
 
+// 扁平化后的固件镜像上限：超过基本可判定是选了带 RAM 段的 ELF
+const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+
 /**
  * 读取固件文件（根据扩展名自动选择解析方式）
  * @param {File} file
@@ -153,6 +156,16 @@ function segmentsToImage(segments, format) {
     if (!segments.length) return { data: new Uint8Array(), baseAddress: 0, format, segments };
     const min = Math.min(...segments.map(s => s.address));
     const max = Math.max(...segments.map(s => s.address + s.data.length));
+
+    // 带 RAM 段的 ELF（例如 0x20000000 起始的 .data）会算出巨大的空洞区间，
+    // 这里直接拦下，避免分配上百 MB 的数组后才发现烧不进去
+    if (max - min > MAX_IMAGE_BYTES) {
+        throw new Error(
+            `固件地址范围过大（0x${min.toString(16)} ~ 0x${max.toString(16)}），` +
+            '可能是包含 RAM 段的 ELF，请改用 .hex 或 .bin'
+        );
+    }
+
     const data = new Uint8Array(max - min);
     for (const s of segments) data.set(s.data, s.address - min);
     return { data, baseAddress: min, format, segments };

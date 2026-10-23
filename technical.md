@@ -37,6 +37,9 @@ dsv4/
 │   ├── favicon-32/48/192/512.png  # 站点图标各尺寸（粉色字标 + 透明底）
 │   ├── apple-touch-icon.png    # iOS 主屏图标（180×180，白底粉色字标）
 │   └── guide/                  # 固件烧录指南配图（Zadig 装驱动 5 张分步截图）
+├── firmware/                   # 在线烧录固件目录（page 读 manifest.json）
+│   ├── manifest.json           # 固件清单（手工维护，含 size / sha256）
+│   └── <tag>__<file>.hex       # 各版本固件，历史版本全部保留
 └── js/
     ├── app.js                  # 主入口：页面路由、初始化、启动提示处理
     ├── msp.js                  # MSP v1 协议编解码 + 请求队列（配置页）
@@ -44,7 +47,6 @@ dsv4/
     ├── protocol.js             # WCH ISP 协议命令编解码（烧录页）
     ├── transport.js            # 传输层通用方法（transfer/assertOk）
     ├── webusb.js               # WebUSB 传输层（含端点自动检测）
-    ├── webserial.js            # WCH ISP 的 WebSerial 传输层（带帧封装，当前未引用）
     ├── device.js               # 芯片数据库（CH32V307 等）
     ├── format.js               # 固件格式解析（.bin/.hex/.elf）
     ├── flasher.js              # 烧录器核心（WchIspFlasher）
@@ -101,7 +103,7 @@ dsv4/
 
 ### 3.5 对话框组件
 
-`dialog.js` 提供三个 API：`showConfirm`（确定/取消）、`showMessage`（消息）、`showChoice`（多选一，烧录连接方式用）。遮罩层必须配合 CSS `[hidden]` 规则才能正确隐藏（详见 §9 已知问题）。
+`dialog.js` 提供两个 API：`showConfirm`（确定/取消）、`showMessage`（消息）。遮罩层必须配合 CSS `[hidden]` 规则才能正确隐藏（详见 §9 已知问题）。
 
 ---
 
@@ -271,9 +273,70 @@ dsv4/
 ### 8.2 烧录页
 
 ```
-点击[连接]（固定走 WebUSB，弹浏览器设备框选 WinChipHead 设备）→ 连接识别芯片 → 选固件文件(.bin/.hex/.elf)
+点击[连接]（固定走 WebUSB，弹浏览器设备框选 WinChipHead 设备）→ 连接识别芯片
+├─ 本地烧录：选固件文件(.bin/.hex/.elf)
+└─ 在线烧录：读站点 firmware/manifest.json → 选版本 → 同源读取 .bin（带 SHA-256 校验）
 → 勾选擦除/校验/重置/解除保护 → [烧录] → 进度条+日志 → 完成后自动断开
 ```
+
+**在线烧录：单一来源 = 站点 `firmware/`**
+
+| 用途 | 端点 | 说明 |
+|---|---|---|
+| 固件清单 | `./firmware/manifest.json` | 同源，不涉及 CORS |
+| 固件本体 | `./firmware/<file>?v=<tag>` | 同源；读后做长度 + SHA-256 校验 |
+
+页面只读站点自己的 `firmware/`，**不访问 GitHub**。固件需要人工放进 `firmware/` 并登记到 `manifest.json`（浏览器做不到自动同步：release 资产响应没有 CORS 头，且网页无法写服务器目录）。
+
+- 「刷新固件」按钮只重读 `manifest.json`（`cache: 'no-store'`），不会扫描磁盘。
+- 清单为空时显示「暂无可用固件，请稍后点「刷新固件」重试」，维护者提示走 `console.warn`。
+- 本地烧录页选好文件后，会渲染一张与在线列表同款的固件卡片（版本号 / BIN-HEX-ELF 角标 / 修改日期 · 文件名 · 大小）。
+
+**`firmware/manifest.json` 结构**
+
+```json
+{
+  "updated": "2026-10-23T22:00:00+08:00",
+  "repo": "P1nkDog/8khz-ds4-gamepad-ch32v307",
+  "firmwares": [
+    {
+      "tag": "v1.0.1",
+      "name": "DS4 手柄固件 v1.0.1",
+      "file": "v1.0.1__ds4_gamepad.bin",
+      "size": 131072,
+      "sha256": "3f2a…",
+      "date": "2026-10-23",
+      "notes": "8kHz 回报率",
+      "prerelease": false
+    }
+  ]
+}
+```
+
+- 数组顺序 = 页面显示顺序，第一项打「最新」角标。
+- `file` 为 `firmware/` 下的文件名，写实际文件名即可（版本 tag 从 `tag` 字段取，不再解析文件名）。
+- 同一版本可同时有 `.hex` 与 `.elf`：清单里是两条独立条目，页面用 HEX / ELF 角标区分；
+  两者解析出的镜像内容一致（已实测），只是体积差 6 倍，建议只留 `.hex`。
+- `size` 与 `sha256` 用于下载后的长度/完整性校验，缺失则跳过校验（建议填写）。
+- 新增固件时把条目插到数组**头部**，并更新顶层 `updated`。
+
+**新增一个版本的操作步骤**
+
+```bash
+# 1. 把构建产物拷进 firmware/
+cp build/xxx.hex firmware/
+
+# 2. 算大小和哈希（Windows 自带 certutil）
+certutil -hashfile firmware/xxx.hex SHA256
+stat -c %s firmware/xxx.hex
+
+# 3. 编辑 firmware/manifest.json，把条目插到 firmwares 数组头部
+#    （tag / file / size / sha256 / date 五项必填，name/notes 可选）
+
+# 4. 部署时 firmware/ 整目录一起上传
+```
+- 固件命名 `<tag>__<asset>`，目录里所有 `.bin/.hex/.elf` 都会写进清单（含 Release 已删除的历史版本）。
+- GitHub API 匿名限流 60 次/小时/IP，结果在页面内存缓存，需手动「刷新固件」才重新请求。
 
 ---
 
@@ -282,7 +345,7 @@ dsv4/
 1. **必须本地服务器访问**：ES 模块 + Web Serial/WebUSB 需要 localhost/HTTPS，`file://` 直接打开会空白。可用 `start.bat`、`python -m http.server` 或 `npx serve`。
 2. **模式匹配**：配置需 CDC 模式（按住模式键上电，见 `Driver/usb/usb_descriptors.c`），烧录需 Bootloader 模式（主板 BOOT1 拨到 1 + Zadig 装 WinUSB 驱动）。
 3. **回报率重启生效**：改回报率保存后需重启设备。
-4. **按键/扳机/宏/曲线/在线烧录/文档页**：固件暂不支持，界面为只读/占位。
+4. **按键/扳机/宏/曲线/文档页**：固件暂不支持，界面为只读/占位。
 5. **摇杆死区为单字段**：固件只有一个 `deadzone`，网页用 X/Y 双滑块读写同一值（联动）。
 6. **对话框遮罩**：`.dialog-overlay` 必须配合 `.dialog-overlay[hidden]{display:none}`，否则遮罩会一直盖住页面、吞掉所有点击。
 7. **配置保存在底边栏统一提交**：各 Tab 的控件只改内存，唯一的 Flash 写入口是 [保存]。

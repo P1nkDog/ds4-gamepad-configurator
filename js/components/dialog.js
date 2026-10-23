@@ -62,45 +62,6 @@ export function showConfirm(title, body) {
 }
 
 /**
- * 选择对话框
- * @param {string} title
- * @param {string} body
- * @param {Array<{label:string, value:string, hint?:string}>} options
- * @returns {Promise<string|null>} 选中的 value，取消返回 null
- */
-export function showChoice(title, body, options) {
-    return new Promise((resolve) => {
-        ensureElements();
-        titleEl.textContent = title;
-        bodyEl.textContent = body;
-        actionsEl.innerHTML = '';
-
-        for (const opt of options) {
-            const btn = document.createElement('button');
-            btn.className = 'btn';
-            btn.textContent = opt.label;
-            if (opt.hint) btn.title = opt.hint;
-            btn.addEventListener('click', () => {
-                hide();
-                resolve(opt.value);
-            });
-            actionsEl.appendChild(btn);
-        }
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.className = 'btn-primary';
-        cancelBtn.textContent = '取消';
-        cancelBtn.addEventListener('click', () => {
-            hide();
-            resolve(null);
-        });
-        actionsEl.appendChild(cancelBtn);
-
-        show();
-    });
-}
-
-/**
  * 消息对话框
  * @param {string} title
  * @param {string} body
