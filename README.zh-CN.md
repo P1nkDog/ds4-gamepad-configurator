@@ -10,13 +10,40 @@
 
 ## 快速开始
 
-> 只是想配置手柄的话，直接打开部署好的网址即可，不需要在本机安装任何东西。
-
 ### 前提
 
 - **Chrome 或 Edge 89+**（必须支持 WebUSB 与 Web Serial）
-- 页面必须通过 **`https://`** 或 **`http://localhost`** 访问——用 `file://` 直接打开 `index.html` 会白屏
+- 页面必须通过 **`https://`** 或 **`http://localhost`** 访问，不能直接双击 `index.html`
 - Windows 首次烧录需要 [Zadig](https://zadig.akeo.ie/) 安装一次 WinUSB 驱动
+
+### 0. 打开网页（二选一）
+
+**方式一：用在线版**
+
+如果作者已经部署，直接用 Chrome / Edge 打开那个网址就行，本机不需要装任何东西。
+
+**方式二：在本机运行**（离线使用，或改了代码想马上看效果）
+
+浏览器不允许用 `file://` 直接打开这类页面，所以需要起一个本地小服务器。项目自带脚本，不需要敲命令；前提是本机装有 **Python 3 或 Node.js**（二选一），都没有的话照下面的提示装一个就行。
+
+1. 下载整个项目：在 GitHub 页面点 **`Code` → `Download ZIP`**，解压到任意目录。
+   ⚠️ 要解压出**整个文件夹**——页面需要加载 `js/`、`css/`、`images/`，只拷 `index.html` 是打不开的。
+2. 双击文件夹里的 **`start.bat`**。会弹出一个黑色窗口，自动挑好运行环境、启动服务器，并打开浏览器。
+3. 地址是 `http://localhost:8080`。浏览器没自动弹出就手动输一次。
+4. 用完后在黑色窗口里按 **`Ctrl + C`** 停止，或直接关掉窗口。
+
+> ⚠️ **不要双击 `index.html`**。那会以 `file://` 打开，脚本模块被浏览器安全策略拦掉，页面一片空白。必须用 `start.bat` 起的 `http://localhost` 地址。
+
+**双击后提示「未找到 python / py / npx」？** 说明本机还没有运行环境。装一个 Python 就够了（不需要 Node）：到 [python.org/downloads](https://www.python.org/downloads/) 下载安装，**安装第一页记得勾上 `Add python.exe to PATH`**，装完重新双击 `start.bat`。
+
+**macOS / Linux**（没有 `start.bat`）：
+
+```bash
+cd dsv4
+python3 -m http.server 8080
+```
+
+然后浏览器打开 `http://localhost:8080`，按 `Ctrl + C` 停止。
 
 ### 1. 烧录固件（仅首次）
 
@@ -104,20 +131,11 @@ BOOT1 还停在 1。拨回 0 再重新上电。
 
 ---
 
-## 本地运行 / 部署
+## 部署
 
-**本地运行**（开发调试或无网络环境）：需要本机装有 **Python 3 或 Node.js**（两者至少一个）。
+纯静态站点，把整个目录（含 `firmware/`）传到任意静态托管即可。唯一硬要求是 **HTTPS**——否则 `navigator.usb` 不存在，点「连接」拿不到设备（`localhost` 是唯一例外）。仓库根目录就是站点根目录，GitHub Pages、Nginx、对象存储都能直接用。
 
-```bash
-# Windows：双击 start.bat（会自动探测 python / py / npx 并起服务）
-# 或者手动指定：
-python -m http.server 8080
-npx serve -l 8080
-```
-
-然后访问 `http://localhost:8080`。
-
-**部署**：纯静态站点，把整个目录（含 `firmware/`）传到任意静态托管即可，唯一硬要求是 **HTTPS**。仓库根目录就是站点根目录，GitHub Pages、Nginx、对象存储都能直接用。
+本地运行方式见「快速开始」第 0 步。
 
 ---
 

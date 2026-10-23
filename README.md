@@ -10,13 +10,40 @@ English | [中文](./README.zh-CN.md)
 
 ## Getting started
 
-> If you only want to configure your gamepad, just open the hosted site — nothing needs to be installed.
-
 ### Prerequisites
 
 - **Chrome or Edge 89+** (WebUSB + Web Serial are required)
-- The page must be served over **`https://`** or **`http://localhost`** — opening `index.html` over `file://` will show a blank page
+- The page must be served over **`https://`** or **`http://localhost`** — double-clicking `index.html` will not work
 - Windows needs [Zadig](https://zadig.akeo.ie/) once, to bind the WinUSB driver
+
+### 0. Open the page (pick one)
+
+**Option A — use the hosted version** 
+
+If the author has deployed it, open that URL in Chrome / Edge. Nothing needs to be installed.
+
+**Option B — run it on your own machine** (offline use, or to see your code changes immediately)
+
+Browsers do not allow pages like this to run over `file://`, so a tiny local web server is needed. The repo ships a script for it, so there are no commands to type — but it does require **Python 3 or Node.js** (either one) on your machine. If you have neither, install Python as described below.
+
+1. Download the whole project: click **`Code` → `Download ZIP`** on GitHub, then extract it anywhere.
+   ⚠️ Extract the **whole folder** — the page loads `js/`, `css/`, `images/`. Copying only `index.html` will not work.
+2. Double-click **`start.bat`** inside the folder. A console window opens, picks a runtime automatically, starts the server and opens your browser.
+3. The address is `http://localhost:8080` — type it manually if the browser did not open.
+4. Press **`Ctrl + C`** in that window to stop, or just close it.
+
+> ⚠️ **Never double-click `index.html`** — it opens over `file://`, the ES modules are blocked by the browser's security policy, and you get a blank page. Always use the `http://localhost` URL started by `start.bat`.
+
+**See "python / py / npx not found"?** No runtime is installed yet. Python alone is enough (Node is not required): download it from [python.org/downloads](https://www.python.org/downloads/) and **tick `Add python.exe to PATH`** on the first installer page, then double-click `start.bat` again.
+
+**macOS / Linux** (there is no `start.bat`):
+
+```bash
+cd dsv4
+python3 -m http.server 8080
+```
+
+Then open `http://localhost:8080` and press `Ctrl + C` to stop.
 
 ### 1. Flash the firmware (first time only)
 
@@ -104,20 +131,11 @@ Zero build step — no `package.json`, no bundler, no framework. Native ES modul
 
 ---
 
-## Run locally / Deploy
+## Deploy
 
-**Local (development or offline use).** Requires **Python 3 or Node.js** — one of them must be installed:
+Fully static: upload the whole folder (including `firmware/`) to any static host. The only hard requirement is **HTTPS** — otherwise `navigator.usb` does not exist and the Connect button cannot see the device (`localhost` is the only exception). The repository root is the site root, so GitHub Pages, Nginx or object storage work as-is.
 
-```bash
-# Windows: double-click start.bat (it probes python / py / npx and starts a server)
-# or explicitly:
-python -m http.server 8080
-npx serve -l 8080
-```
-
-Then open `http://localhost:8080`.
-
-**Deploy.** Fully static: upload the whole folder (including `firmware/`) to any static host. The only hard requirement is **HTTPS**. The repository root is the site root, so GitHub Pages, Nginx or object storage work as-is.
+For running it locally, see step 0 above.
 
 ---
 
