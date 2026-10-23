@@ -1,6 +1,6 @@
 # DS4 手柄配置器 - 技术文档
 
-> 版本：v1.0.0 · 最后更新：2026-08-08
+> 版本：v0.1.0 · 最后更新：2026-10-24
 > 本文档描述网页配置器的完整实现，包括架构、协议、数据模型与已知限制。
 
 ---
@@ -27,8 +27,12 @@ DS4 手柄配置器是一个**纯浏览器端**的配置工具，用于配置基
 
 ```
 dsv4/
+├── README.md                   # 项目说明（英文，GitHub 首页默认显示）
+├── README.zh-CN.md             # 项目说明（中文）
 ├── index.html                  # 入口：侧边栏 + 主题开关 + 对话框 + 启动提示
 ├── start.bat                   # Windows 一键启动本地服务器（自动选 python/py/npx）
+├── docs/
+│   └── technical.md            # 本文档：架构、协议、维护手册
 ├── css/
 │   └── style.css               # 全局样式：主题变量、按钮体系、布局、各页面样式
 ├── images/
@@ -69,6 +73,9 @@ dsv4/
 相关文档：
 - `docs/requirements.md` — 需求文档（UI 布局、页面设计、协议说明）
 - `docs/ui-components.md` — UI 组件库（颜色变量、按钮、Radio、主题开关）
+
+> 上面两份文档位于**上一级项目目录** `ds4-gamepad-configurator/docs/`，不在本站仓库内；
+> 本仓库的 `dsv4/docs/` 目前只有本文档 `technical.md`。
 
 ---
 

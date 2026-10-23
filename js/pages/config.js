@@ -19,7 +19,7 @@ import { renderJoystickTab, GROUP_JOYSTICK_CALIB, GROUP_GAMEPAD_SETTINGS } from 
 import { renderTriggerTab } from '../tabs/trigger.js';
 
 const GROUP_POLLING_RATE = 3;
-const APP_VERSION = 'v1.0.0';
+const APP_VERSION = 'v0.1.0';
 const MSP_REBOOT_MAGIC = 0x52; // 'R'（与固件 msp_protocol.h 一致）
 
 const POLL_RATE_NAMES = ['250 Hz', '500 Hz', '1000 Hz', '2000 Hz', '4000 Hz', '8000 Hz'];
@@ -242,7 +242,7 @@ async function handleConnect() {
             try { await serial.close(); } catch (e) {}
             await showMessage(
                 '通信失败',
-                '连接成功但设备无响应。\n\n请确认设备已进入配置（CDC）模式：按住主板的 Select 按键，同时插入 USB 线，然后再连接。'
+                '连接成功但设备无响应。\n\n请确认设备已进入配置（CDC）模式：按住手柄的 Share 按键，再插入 USB 线（或按 RST 按键），然后再连接。'
             );
             rerenderIfActive();
             return;
@@ -331,16 +331,12 @@ function renderContent(contentEl) {
     if (!connected) {
         contentEl.innerHTML = `
             <div class="guide-card">
-                <h3>开始指南</h3>
+                <h3>配置指南</h3>
                 <ol>
-                    <li>已烧录最新固件（可通过固件烧录页面烧录）</li>
-                    <li>设备已通过 USB 连接电脑</li>
-                    <li>使用 Chrome 或 Edge 浏览器（需支持 Web Serial API）</li>
+                    <li>请先确保主板已经烧录最新固件</li>
+                    <li>按住手柄的 <b>Share</b> 按键（触摸板左上边的按键），再插入 USB 线（或者按 <b>RST</b> 按键），主板会进入配置模式</li>
+                    <li>点击连接，即可连接主板进行配置</li>
                 </ol>
-                <div class="guide-note">
-                    <strong>进入配置模式：</strong>配置功能通过串口（CDC）通信。请<b>按住主板的 Select 按键</b>，
-                    同时插入 USB 线，使设备以配置（CDC）模式启动，然后再点击右上角 [连接]。
-                </div>
             </div>
         `;
         return;
@@ -526,7 +522,7 @@ function renderBoardTab(contentEl) {
         rebootBtn.textContent = '重启中...';
         try {
             await rebootDevice();
-            await showMessage('已重启', '设备已重启。如需继续配置，请按住主板的 Select 按键重新插拔进入配置模式后再连接。');
+            await showMessage('已重启', '设备已重启。如需继续配置，请按住手柄的 Share 按键重新插拔（或按 RST 按键）进入配置模式后再连接。');
         } catch (err) {
             await showMessage('重启失败', err.message || String(err));
         } finally {

@@ -11,7 +11,7 @@ import { renderTabBar, setActiveTab } from '../components/tabs.js';
 import { showMessage } from '../components/dialog.js';
 import { parseFirmware } from '../format.js';
 
-const APP_VERSION = 'v1.0.0';
+const APP_VERSION = 'v0.1.0';
 
 // 在线烧录：只读站点 firmware/ 目录下的固件清单（同源，无 CORS）
 // 固件由 tools/sync_firmware.py 从 GitHub Release 同步进来，页面不直接访问 GitHub
