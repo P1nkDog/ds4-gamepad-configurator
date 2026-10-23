@@ -143,4 +143,4 @@ For running it locally, see step 0 above.
 
 - Firmware repository — [P1nkDog/8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
 - Technical documentation — [`technical.md`](./docs/technical.md) (Chinese)
-- Credits — WCH ISP adapted from [wchisp-web](https://github.com/P1nkDog/wchisp-web); USB stack is [TinyUSB](https://github.com/hathach/tinyusb)
+- Credits — WCH ISP implementation adapted from [wchisp-web](https://github.com/P1nkDog/wchisp-web)

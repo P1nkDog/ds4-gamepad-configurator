@@ -143,4 +143,4 @@ BOOT1 还停在 1。拨回 0 再重新上电。
 
 - 固件仓库 —— [P1nkDog/8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
 - 技术文档 —— [`technical.md`](./docs/technical.md)
-- 致谢 —— WCH ISP 实现参考 [wchisp-web](https://github.com/P1nkDog/wchisp-web)；USB 协议栈为 [TinyUSB](https://github.com/hathach/tinyusb)
+- 致谢 —— WCH ISP 烧录实现参考 [wchisp-web](https://github.com/P1nkDog/wchisp-web)
