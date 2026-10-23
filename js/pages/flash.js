@@ -2,14 +2,13 @@
  * flash.js - 固件烧录页面
  *
  * 连接方式（WCH ISP，参考 wchisp-web/test-site/main.js）：
- * - WebUSB（默认）：直接 USB 通信，WCH ISP 设备（VID 0x4348/0x1a86，PID 0x55e0）
- * - Web Serial (CDC)：串口通信，需要驱动支持
+ * - 统一使用 WebUSB 直接 USB 通信，WCH ISP 设备（USB ID 4348 55E0）
  *
  * 烧录流程：识别芯片 → (解除保护) → 擦除 → 写入 → 校验 → 重置
  */
 
 import { renderTabBar, setActiveTab } from '../components/tabs.js';
-import { showMessage, showChoice } from '../components/dialog.js';
+import { showMessage } from '../components/dialog.js';
 
 const APP_VERSION = 'v1.0.0';
 
@@ -84,21 +83,11 @@ async function handleConnect() {
     try {
         if (btn) { btn.disabled = true; btn.textContent = '连接中...'; }
 
-        // 选择连接方式
-        const type = await showChoice('选择连接方式', '请选择与芯片 RAM Bootloader 的通信方式：', [
-            { label: 'WebUSB 连接', value: 'usb', hint: '直接 USB 通信（需 WinUSB 驱动，推荐）' },
-            { label: 'Web Serial 连接', value: 'serial', hint: '串口通信（需 CDC 驱动）' },
-        ]);
-
-        if (!type) return;
-
+        // 统一使用 WebUSB 连接，不再询问连接方式
         const { WchIspFlasher } = await import('../flasher.js');
         const { WebUsbTransport } = await import('../webusb.js');
-        const { WebSerialTransport } = await import('../webserial.js');
 
-        const transport = type === 'usb'
-            ? await WebUsbTransport.request()
-            : await WebSerialTransport.request({ baudRate: 115200 });
+        const transport = await WebUsbTransport.request();
 
         flasher = new WchIspFlasher(transport);
         flasher.onLog = appendLog;
@@ -264,16 +253,53 @@ function renderFlashGuide(contentEl) {
     contentEl.innerHTML = `
         <div class="guide-card">
             <h3>固件烧录指南</h3>
-            <ol>
-                <li>下载并安装 <b>zadig</b> 工具</li>
-                <li>按住主板的 <b>PS 按键</b>，同时插入 USB 线，进入芯片 RAM Bootloader</li>
-                <li>使用 zadig 下载安装 <b>WinUSB 驱动</b></li>
-                <li>点击右上角 [连接] 按钮连接主板</li>
+            <p class="guide-intro">固件烧录前需要为芯片更改驱动以连接浏览器。</p>
+            <ol class="guide-steps">
+                <li>
+                    <div class="step-title">将主板底下的 <b>BOOT1</b> 开关拨到 <b>1</b></div>
+                </li>
+                <li>
+                    <div class="step-title">用 USB 线连接到电脑</div>
+                </li>
+                <li>
+                    <div class="step-title">下载并安装 <a href="https://zadig.akeo.ie/" target="_blank" rel="noopener noreferrer">Zadig</a></div>
+                </li>
+                <li>
+                    <div class="step-title">双击打开 Zadig</div>
+                    <figure class="guide-figure">
+                        <img src="images/guide/zadig-1-open.png" alt="Zadig 主界面" loading="lazy">
+                    </figure>
+                </li>
+                <li>
+                    <div class="step-title">点击 <b>Options</b>，再点击 <b>List All Devices</b></div>
+                    <figure class="guide-figure">
+                        <img src="images/guide/zadig-2-list-all-devices.png" alt="Options 菜单中点击 List All Devices" loading="lazy">
+                    </figure>
+                </li>
+                <li>
+                    <div class="step-title">在设备选择框里面找到一个 USB ID 为 <b>4348 55E0</b> 的一个设备，为其安装 <b>WinUSB</b> 驱动</div>
+                    <figure class="guide-figure">
+                        <img src="images/guide/zadig-3-install-driver.png" alt="选中 USB ID 4348 55E0 的设备并安装 WinUSB 驱动" loading="lazy">
+                    </figure>
+                </li>
+                <li>
+                    <div class="step-title">等待其安装完成</div>
+                    <figure class="guide-figure">
+                        <img src="images/guide/zadig-4-installed.png" alt="驱动安装完成提示" loading="lazy">
+                    </figure>
+                </li>
+                <li>
+                    <div class="step-title">回到网页，点击右上角的连接按钮，在右上角的框框里面选择“来自 WinChipHead 的未知设备”，然后点击连接</div>
+                    <figure class="guide-figure">
+                        <img src="images/guide/zadig-5-webusb-connect.png" alt="浏览器设备选择框中选择 WinChipHead 设备" loading="lazy">
+                    </figure>
+                </li>
+                <li>
+                    <div class="step-title">即可连接上设备进行烧录</div>
+                </li>
             </ol>
             <div class="guide-note">
-                <strong>连接方式：</strong><br>
-                • <b>WebUSB</b>（默认）：直接 USB 通信，WCH ISP 设备（VID 0x4348/0x1a86，PID 0x55e0），推荐<br>
-                • <b>Web Serial (CDC)</b>：串口通信，需要驱动支持
+                <b>烧录完成后，请把 BOOT1 拨回 0 再重新上电，设备才会以新固件正常启动。</b>
             </div>
         </div>
         <div class="log-area" id="flash-log"></div>

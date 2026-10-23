@@ -27,7 +27,8 @@ export function renderHomePage(container) {
                             <span class="side top">on github</span>
                         </div>
                     </a>
-                    <a class="btn-github" href="#" aria-disabled="true" title="网页源码（待定）">
+                    <a class="btn-github" href="https://github.com/P1nkDog/ds4-gamepad-configurator"
+                       target="_blank" rel="noopener noreferrer" title="网页源码仓库">
                         <div class="icon">${GITHUB_SVG}</div>
                         <div class="cube">
                             <span class="side front">网页源码</span>

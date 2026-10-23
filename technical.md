@@ -13,7 +13,7 @@ DS4 手柄配置器是一个**纯浏览器端**的配置工具，用于配置基
 |---|---|
 | 前端 | 原生 HTML / CSS / JavaScript（ES 模块，无框架） |
 | 配置通信 | Web Serial API + **MSP v1** 协议（配置页） |
-| 固件烧录 | WebUSB / Web Serial + **WCH ISP** 协议（烧录页） |
+| 固件烧录 | WebUSB（统一入口）+ **WCH ISP** 协议（烧录页） |
 | 浏览器 | Chrome / Edge 89+（需支持 Web Serial / WebUSB，且需 localhost 或 HTTPS） |
 | 目标固件 | `CH32V307VCT_tinyusb_ds4_A`（基于 TinyUSB 的 PS4 手柄） |
 
@@ -35,7 +35,8 @@ dsv4/
 │   ├── p1nkd.png               # P1NKD 字标原图（约 3.46:1，透明底，品牌粉 #F70069），侧边栏/首页 Logo
 │   ├── favicon.ico             # 站点图标（内嵌 16/32/48/64，粉色字标 + 透明底）
 │   ├── favicon-32/48/192/512.png  # 站点图标各尺寸（粉色字标 + 透明底）
-│   └── apple-touch-icon.png    # iOS 主屏图标（180×180，白底粉色字标）
+│   ├── apple-touch-icon.png    # iOS 主屏图标（180×180，白底粉色字标）
+│   └── guide/                  # 固件烧录指南配图（Zadig 装驱动 5 张分步截图）
 └── js/
     ├── app.js                  # 主入口：页面路由、初始化、启动提示处理
     ├── msp.js                  # MSP v1 协议编解码 + 请求队列（配置页）
@@ -43,7 +44,7 @@ dsv4/
     ├── protocol.js             # WCH ISP 协议命令编解码（烧录页）
     ├── transport.js            # 传输层通用方法（transfer/assertOk）
     ├── webusb.js               # WebUSB 传输层（含端点自动检测）
-    ├── webserial.js            # WCH ISP 的 WebSerial 传输层（带帧封装）
+    ├── webserial.js            # WCH ISP 的 WebSerial 传输层（带帧封装，当前未引用）
     ├── device.js               # 芯片数据库（CH32V307 等）
     ├── format.js               # 固件格式解析（.bin/.hex/.elf）
     ├── flasher.js              # 烧录器核心（WchIspFlasher）
@@ -270,7 +271,7 @@ dsv4/
 ### 8.2 烧录页
 
 ```
-选择连接方式(WebUSB/Web Serial) → 连接识别芯片 → 选固件文件(.bin/.hex/.elf)
+点击[连接]（固定走 WebUSB，弹浏览器设备框选 WinChipHead 设备）→ 连接识别芯片 → 选固件文件(.bin/.hex/.elf)
 → 勾选擦除/校验/重置/解除保护 → [烧录] → 进度条+日志 → 完成后自动断开
 ```
 
@@ -279,7 +280,7 @@ dsv4/
 ## 9. 已知限制与注意事项
 
 1. **必须本地服务器访问**：ES 模块 + Web Serial/WebUSB 需要 localhost/HTTPS，`file://` 直接打开会空白。可用 `start.bat`、`python -m http.server` 或 `npx serve`。
-2. **模式匹配**：配置需 CDC 模式（按 Select），烧录需 Bootloader 模式（按 PS + WinUSB 驱动）。
+2. **模式匹配**：配置需 CDC 模式（按住模式键上电，见 `Driver/usb/usb_descriptors.c`），烧录需 Bootloader 模式（主板 BOOT1 拨到 1 + Zadig 装 WinUSB 驱动）。
 3. **回报率重启生效**：改回报率保存后需重启设备。
 4. **按键/扳机/宏/曲线/在线烧录/文档页**：固件暂不支持，界面为只读/占位。
 5. **摇杆死区为单字段**：固件只有一个 `deadzone`，网页用 X/Y 双滑块读写同一值（联动）。

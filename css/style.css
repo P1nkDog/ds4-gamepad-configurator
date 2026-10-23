@@ -692,6 +692,56 @@ body {
   color: var(--text-primary);
 }
 
+/* 带配图的分步指南 */
+.guide-card .guide-intro {
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.guide-card a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.guide-card a:hover {
+  color: var(--accent-hover);
+}
+
+.guide-card .guide-steps {
+  padding-left: 22px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.guide-steps > li {
+  margin-bottom: 20px;
+}
+
+.guide-steps > li:last-child {
+  margin-bottom: 0;
+}
+
+.guide-steps .step-title {
+  font-weight: 600;
+}
+
+.guide-figure {
+  margin: 10px 0 0;
+}
+
+.guide-figure img {
+  display: block;
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
 .guide-card .guide-note {
   margin-top: 16px;
   padding: 12px 14px;
