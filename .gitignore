@@ -1,0 +1,18 @@
+# ---- 系统 / 编辑器 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ---- 本地临时产物 ----
+*.zip
+*.log
+*.bak
+*.orig
+__pycache__/
+*.pyc
+
+# ---- 依赖（如将来引入构建工具） ----
+node_modules/
