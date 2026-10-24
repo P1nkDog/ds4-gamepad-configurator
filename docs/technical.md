@@ -30,7 +30,6 @@ dsv4/
 ├── README.md                   # 项目说明（英文，GitHub 首页默认显示）
 ├── README.zh-CN.md             # 项目说明（中文）
 ├── index.html                  # 入口：侧边栏 + 主题开关 + 对话框 + 启动提示
-├── start.bat                   # Windows 一键启动本地服务器（自动选 python/py/npx）
 ├── docs/
 │   └── technical.md            # 本文档：架构、协议、维护手册
 ├── css/
@@ -349,7 +348,7 @@ stat -c %s firmware/xxx.hex
 
 ## 9. 已知限制与注意事项
 
-1. **必须本地服务器访问**：ES 模块 + Web Serial/WebUSB 需要 localhost/HTTPS，`file://` 直接打开会空白。可用 `start.bat`、`python -m http.server` 或 `npx serve`。
+1. **必须本地服务器访问**：ES 模块 + Web Serial/WebUSB 需要 localhost/HTTPS，`file://` 直接打开会空白。用 `python -m http.server 8080` 或 `npx serve` 起本地服务器。
 2. **模式匹配**：配置需 CDC 模式（按住模式键上电，见 `Driver/usb/usb_descriptors.c`），烧录需 Bootloader 模式（主板 BOOT1 拨到 1 + Zadig 装 WinUSB 驱动）。
 3. **回报率重启生效**：改回报率保存后需重启设备。
 4. **按键/扳机/宏/曲线/文档页**：固件暂不支持，界面为只读/占位。
@@ -362,11 +361,11 @@ stat -c %s firmware/xxx.hex
 ## 10. 启动与部署
 
 ```bash
-# 方式一：Windows 双击 dsv4/start.bat
-# 方式二：Python
-cd dsv4 && python -m http.server 8080
-# 方式三：Node
-cd dsv4 && npx serve
+# 需要本机装有 Python 3 或 Node.js（二选一）
+# Python
+cd dsv4 && python -m http.server 8080     # macOS / Linux 用 python3
+# Node
+cd dsv4 && npx serve -l 8080
 ```
 
 浏览器访问 `http://localhost:8080`（Chrome / Edge）。

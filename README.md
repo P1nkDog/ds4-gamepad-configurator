@@ -18,32 +18,32 @@ English | [中文](./README.zh-CN.md)
 
 ### 0. Open the page (pick one)
 
-**Option A — use the hosted version** 
+**Option A — use the hosted version**
 
 If the author has deployed it, open that URL in Chrome / Edge. Nothing needs to be installed.
 
 **Option B — run it on your own machine** (offline use, or to see your code changes immediately)
 
-Browsers do not allow pages like this to run over `file://`, so a tiny local web server is needed. The repo ships a script for it, so there are no commands to type — but it does require **Python 3 or Node.js** (either one) on your machine. If you have neither, install Python as described below.
+Browsers do not allow pages like this to run over `file://`, so a tiny local web server is needed. It requires **Python 3 or Node.js** (either one — Python is the common case).
 
 1. Download the whole project: click **`Code` → `Download ZIP`** on GitHub, then extract it anywhere.
    ⚠️ Extract the **whole folder** — the page loads `js/`, `css/`, `images/`. Copying only `index.html` will not work.
-2. Double-click **`start.bat`** inside the folder. A console window opens, picks a runtime automatically, starts the server and opens your browser.
-3. The address is `http://localhost:8080` — type it manually if the browser did not open.
-4. Press **`Ctrl + C`** in that window to stop, or just close it.
+2. Open a terminal in that folder. On Windows the fastest way: open the folder in File Explorer, click the address bar, type `cmd` and press Enter.
+3. Start a local server (pick the one you have installed):
 
-> ⚠️ **Never double-click `index.html`** — it opens over `file://`, the ES modules are blocked by the browser's security policy, and you get a blank page. Always use the `http://localhost` URL started by `start.bat`.
+   ```bash
+   # with Python 3 (python on Windows, python3 on macOS / Linux)
+   python -m http.server 8080
 
-**See "python / py / npx not found"?** No runtime is installed yet. Python alone is enough (Node is not required): download it from [python.org/downloads](https://www.python.org/downloads/) and **tick `Add python.exe to PATH`** on the first installer page, then double-click `start.bat` again.
+   # or with Node.js
+   npx serve -l 8080
+   ```
 
-**macOS / Linux** (there is no `start.bat`):
+4. Open `http://localhost:8080` in the browser; press **`Ctrl + C`** in the terminal to stop.
 
-```bash
-cd dsv4
-python3 -m http.server 8080
-```
+> ⚠️ **Never double-click `index.html`** — it opens over `file://`, the ES modules are blocked by the browser's security policy, and you get a blank page. Always use the `http://localhost` URL.
 
-Then open `http://localhost:8080` and press `Ctrl + C` to stop.
+**See "not recognized as an internal or external command"?** No Python installed yet. Get it from [python.org/downloads](https://www.python.org/downloads/) and **tick `Add python.exe to PATH`** on the first installer page, then reopen the terminal.
 
 ### 1. Flash the firmware (first time only)
 

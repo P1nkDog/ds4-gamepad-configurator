@@ -24,26 +24,26 @@
 
 **方式二：在本机运行**（离线使用，或改了代码想马上看效果）
 
-浏览器不允许用 `file://` 直接打开这类页面，所以需要起一个本地小服务器。项目自带脚本，不需要敲命令；前提是本机装有 **Python 3 或 Node.js**（二选一），都没有的话照下面的提示装一个就行。
+浏览器不允许用 `file://` 直接打开这类页面，所以要起一个本地小服务器。前提是本机装有 **Python 3 或 Node.js**（二选一，Python 更常见）。
 
 1. 下载整个项目：在 GitHub 页面点 **`Code` → `Download ZIP`**，解压到任意目录。
    ⚠️ 要解压出**整个文件夹**——页面需要加载 `js/`、`css/`、`images/`，只拷 `index.html` 是打不开的。
-2. 双击文件夹里的 **`start.bat`**。会弹出一个黑色窗口，自动挑好运行环境、启动服务器，并打开浏览器。
-3. 地址是 `http://localhost:8080`。浏览器没自动弹出就手动输一次。
-4. 用完后在黑色窗口里按 **`Ctrl + C`** 停止，或直接关掉窗口。
+2. 打开终端并进入这个文件夹。Windows 最快的办法：在资源管理器打开该文件夹，点一下地址栏、输入 `cmd` 回车。
+3. 启动本地服务器（按你装的环境选一条）：
 
-> ⚠️ **不要双击 `index.html`**。那会以 `file://` 打开，脚本模块被浏览器安全策略拦掉，页面一片空白。必须用 `start.bat` 起的 `http://localhost` 地址。
+   ```bash
+   # 有 Python 3（Windows 用 python，macOS / Linux 用 python3）
+   python -m http.server 8080
 
-**双击后提示「未找到 python / py / npx」？** 说明本机还没有运行环境。装一个 Python 就够了（不需要 Node）：到 [python.org/downloads](https://www.python.org/downloads/) 下载安装，**安装第一页记得勾上 `Add python.exe to PATH`**，装完重新双击 `start.bat`。
+   # 或者有 Node.js
+   npx serve -l 8080
+   ```
 
-**macOS / Linux**（没有 `start.bat`）：
+4. 浏览器打开 `http://localhost:8080`；要停止时在终端按 **`Ctrl + C`**。
 
-```bash
-cd dsv4
-python3 -m http.server 8080
-```
+> ⚠️ **不要双击 `index.html`**。那会以 `file://` 打开，脚本模块被浏览器安全策略拦掉，页面一片空白。必须通过 `http://localhost` 访问。
 
-然后浏览器打开 `http://localhost:8080`，按 `Ctrl + C` 停止。
+**提示「不是内部或外部命令」？** 说明本机还没装 Python。到 [python.org/downloads](https://www.python.org/downloads/) 下载安装，**安装第一页记得勾上 `Add python.exe to PATH`**，装完重新打开终端再试。
 
 ### 1. 烧录固件（仅首次）
 
