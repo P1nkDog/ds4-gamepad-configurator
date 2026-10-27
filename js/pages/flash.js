@@ -618,12 +618,17 @@ async function downloadFirmware(fw) {
         return bytes;
     }
 
+    appendLog(`校验 SHA-256…（期望 ${fw.sha256}）`);
+    const started = performance.now();
     const actual = await sha256Hex(bytes);
+    const cost = Math.max(1, Math.round(performance.now() - started));
+
     if (actual !== fw.sha256) {
+        appendLog(`SHA-256 不匹配：期望 ${fw.sha256}，实际 ${actual}`, true);
         console.warn(`[在线烧录] SHA-256 不匹配 expect=${fw.sha256} actual=${actual}`);
         throw new Error('固件完整性校验失败（SHA-256 不匹配），请刷新固件清单后重试');
     }
-    appendLog(`SHA-256 校验通过（${actual.slice(0, 16)}…）`);
+    appendLog(`SHA-256 校验通过（实际 ${actual}，${formatBytes(bytes.length)}，${cost} ms）`);
     return bytes;
 }
 
