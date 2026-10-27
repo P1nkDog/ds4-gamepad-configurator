@@ -139,6 +139,10 @@ BOOT1 还停在 1。拨回 0 再重新上电。
 
 ---
 
+## 许可证
+
+[GPL-3.0-only](./LICENSE)。可以自由使用、修改、分发，但衍生工程必须同样以 GPL-3.0 开源，且不提供担保。
+
 ## 相关链接
 
 - 固件仓库 —— [P1nkDog/8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)

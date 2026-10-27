@@ -139,6 +139,10 @@ For running it locally, see step 0 above.
 
 ---
 
+## License
+
+[GPL-3.0-only](./LICENSE). Free to use, modify and redistribute, but derivative works must also be released under GPL-3.0, with no warranty.
+
 ## Links
 
 - Firmware repository — [P1nkDog/8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
