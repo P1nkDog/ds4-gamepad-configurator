@@ -85,6 +85,16 @@
         </div>
     </div>
 
+    <script>
+        // 安全上下文下立即移除启动提示：app.js 是 module（延迟执行），
+        // 等它跑起来再移除，遮罩会先闪一下。
+        // 只在 http/https 下移除——file:// 打开时 isSecureContext 也是 true，
+        // 但模块会被 CORS 拦住，必须把提示留着告诉用户怎么起服务器。
+        if (location.protocol.startsWith('http') && window.isSecureContext) {
+            document.getElementById('boot-error')?.remove();
+        }
+    </script>
+
     <script type="module" src="js/app.js"></script>
 </body>
 </html>
