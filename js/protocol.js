@@ -1,6 +1,11 @@
 /**
  * protocol.js - WCH ISP 协议
  * 移植自 wchisp-web/src/protocol.ts
+ *
+ * 注意：本文件是协议层的完整移植，不按「是否被调用」裁剪。
+ * 数据区读写擦（DATA_PROGRAM / DATA_READ / DATA_ERASE）、SET_BAUD、
+ * 串口帧封装（frameSerialRequest / parseSerialResponse）当前烧录流程用不到，
+ * 属于预留能力，后续可能会调用——不要当成死代码删掉。
  */
 
 export const MAX_PACKET_SIZE = 64;
