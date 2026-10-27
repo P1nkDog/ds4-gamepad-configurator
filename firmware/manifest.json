@@ -5,9 +5,9 @@
     {
       "tag": "v0.1.0",
       "name": "v0.1.0",
-      "file": "8khz-ds4-gamepad-ch32v307-V0.1.0.hex",
-      "size": 75888,
-      "sha256": "46fd6900b52dbedf36d86a01a5d344c809d5188c1987ba8a48d0c2b17205c805",
+      "file": "8khz-ds4-gamepad-ch32v307-V0.1.0.bin",
+      "size": 26972,
+      "sha256": "6a27d09cbea3c2fd30e745f55f1f52e33d93bb525d9ba4c48f82111a59af2e15",
       "date": "2026-10-23",
       "notes": "",
       "prerelease": false

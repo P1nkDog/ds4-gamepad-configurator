@@ -42,7 +42,7 @@ dsv4/
 │   └── guide/                  # 固件烧录指南配图（Zadig 装驱动 5 张分步截图）
 ├── firmware/                   # 在线烧录固件目录（page 读 manifest.json）
 │   ├── manifest.json           # 固件清单（手工维护，含 size / sha256）
-│   └── <tag>__<file>.hex       # 各版本固件，历史版本全部保留
+│   └── <tag>__<file>.bin       # 各版本固件，历史版本全部保留
 └── js/
     ├── app.js                  # 主入口：页面路由、初始化、启动提示处理
     ├── msp.js                  # MSP v1 协议编解码 + 请求队列（配置页）
@@ -281,7 +281,7 @@ dsv4/
 ```
 点击[连接]（固定走 WebUSB，弹浏览器设备框选 WinChipHead 设备）→ 连接识别芯片
 ├─ 本地烧录：选固件文件(.bin/.hex/.elf)
-└─ 在线烧录：读站点 firmware/manifest.json → 选版本 → 同源读取 .bin（带 SHA-256 校验）
+└─ 在线烧录：读站点 firmware/manifest.json → 选版本 → 同源读取固件文件
 → 勾选擦除/校验/重置/解除保护 → [烧录] → 进度条+日志 → 完成后自动断开
 ```
 
@@ -290,7 +290,7 @@ dsv4/
 | 用途 | 端点 | 说明 |
 |---|---|---|
 | 固件清单 | `./firmware/manifest.json` | 同源，不涉及 CORS |
-| 固件本体 | `./firmware/<file>?v=<tag>` | 同源；读后做长度 + SHA-256 校验 |
+| 固件本体 | `./firmware/<file>?v=<tag>` | 同源；读后按清单 `sha256` 校验（不匹配直接拒绝烧录） |
 
 页面只读站点自己的 `firmware/`，**不访问 GitHub**。固件需要人工放进 `firmware/` 并登记到 `manifest.json`（浏览器做不到自动同步：release 资产响应没有 CORS 头，且网页无法写服务器目录）。
 
@@ -321,23 +321,23 @@ dsv4/
 
 - 数组顺序 = 页面显示顺序，第一项打「最新」角标。
 - `file` 为 `firmware/` 下的文件名，写实际文件名即可（版本 tag 从 `tag` 字段取，不再解析文件名）。
-- 同一版本可同时有 `.hex` 与 `.elf`：清单里是两条独立条目，页面用 HEX / ELF 角标区分；
-  两者解析出的镜像内容一致（已实测），只是体积差 6 倍，建议只留 `.hex`。
-- `size` 与 `sha256` 用于下载后的长度/完整性校验，缺失则跳过校验（建议填写）。
+- 推荐只放 `.bin`：裸镜像没有内部校验和，所以靠 `sha256` 兜底，页面对不上直接拒绝烧录。
+- `size` 填文件本身的字节数（`.bin` 的镜像大小 = 文件大小），只用于列表显示和进度估算，留空则不显示大小。
+- 同时放 `.hex` 时：清单里是两条独立条目，页面用 BIN / HEX 角标区分。`.hex` 自带逐行校验和，**不要给它填 `sha256`**——它是文本，git 的 CRLF/LF 规范化会改变字节数（实测 75888 → 74200，正是 1688 行各少一个 `\r`），登记了就必然误报；`sha256` 留空则跳过校验。
 - 新增固件时把条目插到数组**头部**，并更新顶层 `updated`。
 
 **新增一个版本的操作步骤**
 
 ```bash
-# 1. 把构建产物拷进 firmware/
-cp build/xxx.hex firmware/
+# 1. hex 转 bin（objcopy 不认中文路径，必须用相对路径调用）
+objcopy -I ihex -O binary build/xxx.hex firmware/xxx.bin
 
-# 2. 算大小和哈希（Windows 自带 certutil）
-certutil -hashfile firmware/xxx.hex SHA256
-stat -c %s firmware/xxx.hex
+# 2. 算大小和哈希（sha256sum 是 Git Bash 自带的；CMD 下用 certutil -hashfile firmware/xxx.bin SHA256）
+stat -c %s firmware/xxx.bin
+sha256sum firmware/xxx.bin
 
 # 3. 编辑 firmware/manifest.json，把条目插到 firmwares 数组头部
-#    （tag / file / size / sha256 / date 五项必填，name/notes 可选）
+#    （tag / file / sha256 / date 四项必填，size 建议填，name/notes 可选）
 
 # 4. 部署时 firmware/ 整目录一起上传
 ```

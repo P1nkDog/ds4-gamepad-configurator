@@ -595,6 +595,11 @@ async function fetchLocalManifest() {
 
 /**
  * 读取选中固件（站点同源），返回 Uint8Array
+ *
+ * 完整性靠清单里的 sha256：
+ * - `.bin` 是裸数据，没有任何内部校验，必须靠它兜底；
+ * - `.hex` 自带逐行校验和，清单里不填 sha256 就跳过这一步
+ *   （.hex 是文本，git 的 CRLF/LF 规范化会改变字节数，登记了反而容易误报）。
  */
 async function downloadFirmware(fw) {
     const url = `./${FIRMWARE_DIR}/${encodeURIComponent(fw.fileName)}?v=${encodeURIComponent(fw.tag)}`;
@@ -608,19 +613,23 @@ async function downloadFirmware(fw) {
 
     const bytes = await readBodyWithProgress(res, fw.size);
 
-    if (fw.size && bytes.length !== fw.size) {
-        throw new Error(`固件长度不符：期望 ${fw.size} 字节，实际 ${bytes.length} 字节`);
+    if (!fw.sha256) {
+        appendLog('清单未登记 SHA-256，跳过完整性校验');
+        return bytes;
     }
-    if (fw.sha256) {
-        const actual = await sha256Hex(bytes);
-        if (actual !== fw.sha256) {
-            console.warn(`[在线烧录] SHA-256 不匹配 expect=${fw.sha256} actual=${actual}`);
-            throw new Error('固件校验失败，请刷新后重试');
-        }
+
+    const actual = await sha256Hex(bytes);
+    if (actual !== fw.sha256) {
+        console.warn(`[在线烧录] SHA-256 不匹配 expect=${fw.sha256} actual=${actual}`);
+        throw new Error('固件完整性校验失败（SHA-256 不匹配），请刷新固件清单后重试');
     }
+    appendLog(`SHA-256 校验通过（${actual.slice(0, 16)}…）`);
     return bytes;
 }
 
+/**
+ * 计算字节流的 SHA-256（小写十六进制）
+ */
 async function sha256Hex(bytes) {
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
