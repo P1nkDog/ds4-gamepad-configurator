@@ -2,7 +2,7 @@
 
 基于 CH32V307 的 8kHz DS4 手柄配套网页工具。纯浏览器端运行，无需安装、无需后端——用 **Web Serial** 配置参数，用 **WebUSB** 烧录固件。
 
-`v0.1.0` · 配套固件：[8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
+`v0.1.0` · **在线版：** <https://p1nkdog.github.io/ds4-gamepad-configurator/> · 配套固件：[8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
 
 [English](./README.md) | 中文
 
@@ -20,7 +20,7 @@
 
 **方式一：用在线版**
 
-如果作者已经部署，直接用 Chrome / Edge 打开那个网址就行，本机不需要装任何东西。
+直接用 Chrome / Edge 打开 **<https://p1nkdog.github.io/ds4-gamepad-configurator/>**，本机不需要装任何东西。
 
 **方式二：在本机运行**（离线使用，或改了代码想马上看效果）
 
@@ -135,6 +135,8 @@ BOOT1 还停在 1。拨回 0 再重新上电。
 
 纯静态站点，把整个目录（含 `firmware/`）传到任意静态托管即可。唯一硬要求是 **HTTPS**——否则 `navigator.usb` 不存在，点「连接」拿不到设备（`localhost` 是唯一例外）。仓库根目录就是站点根目录，GitHub Pages、Nginx、对象存储都能直接用。
 
+本仓库已通过 GitHub Pages 发布在 <https://p1nkdog.github.io/ds4-gamepad-configurator/>。
+
 本地运行方式见「快速开始」第 0 步。
 
 ---
@@ -145,6 +147,7 @@ BOOT1 还停在 1。拨回 0 再重新上电。
 
 ## 相关链接
 
+- 在线配置器 —— <https://p1nkdog.github.io/ds4-gamepad-configurator/>
 - 固件仓库 —— [P1nkDog/8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
 - 技术文档 —— [`technical.md`](./docs/technical.md)
 - 致谢 —— WCH ISP 烧录实现参考 [wchisp-web](https://github.com/P1nkDog/wchisp-web)

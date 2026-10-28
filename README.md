@@ -2,7 +2,7 @@
 
 Browser-based configurator for the CH32V307 8 kHz DS4 gamepad. No install, no backend — configure over **Web Serial**, flash firmware over **WebUSB**.
 
-`v0.1.0` · Companion firmware: [8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
+`v0.1.0` · **Live:** <https://p1nkdog.github.io/ds4-gamepad-configurator/> · Companion firmware: [8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
 
 English | [中文](./README.zh-CN.md)
 
@@ -20,7 +20,7 @@ English | [中文](./README.zh-CN.md)
 
 **Option A — use the hosted version**
 
-If the author has deployed it, open that URL in Chrome / Edge. Nothing needs to be installed.
+Open **<https://p1nkdog.github.io/ds4-gamepad-configurator/>** in Chrome or Edge. Nothing needs to be installed.
 
 **Option B — run it on your own machine** (offline use, or to see your code changes immediately)
 
@@ -135,6 +135,8 @@ Zero build step — no `package.json`, no bundler, no framework. Native ES modul
 
 Fully static: upload the whole folder (including `firmware/`) to any static host. The only hard requirement is **HTTPS** — otherwise `navigator.usb` does not exist and the Connect button cannot see the device (`localhost` is the only exception). The repository root is the site root, so GitHub Pages, Nginx or object storage work as-is.
 
+This repository is published via GitHub Pages at <https://p1nkdog.github.io/ds4-gamepad-configurator/>.
+
 For running it locally, see step 0 above.
 
 ---
@@ -145,6 +147,7 @@ For running it locally, see step 0 above.
 
 ## Links
 
+- Online configurator — <https://p1nkdog.github.io/ds4-gamepad-configurator/>
 - Firmware repository — [P1nkDog/8khz-ds4-gamepad-ch32v307](https://github.com/P1nkDog/8khz-ds4-gamepad-ch32v307)
 - Technical documentation — [`technical.md`](./docs/technical.md) (Chinese)
 - Credits — WCH ISP implementation adapted from [wchisp-web](https://github.com/P1nkDog/wchisp-web)
