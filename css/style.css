@@ -1977,3 +1977,402 @@ body {
     min-width: 0;
   }
 }
+
+/* ============================================================
+   多配置 UI（js/pages/config.js）
+     - 顶部 Tab 栏右侧的配置切换下拉框
+     - 主板页「配置与快捷键」卡片（槽位按钮 / 名称输入 / 盲切开关）
+   全部 .profile-* 作用域，配色沿用全局主题变量（亮/暗自动适配）
+   ============================================================ */
+
+/* Tab 栏右侧：配置切换下拉框（放在 [断开] 左侧，行内对齐） */
+.profile-select {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.profile-select:hover,
+.profile-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 主板页：4 个配置槽位按钮 */
+.profile-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.profile-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.profile-slot:hover {
+  border-color: var(--accent);
+}
+
+.profile-slot.active {
+  border-color: var(--accent);
+  background: var(--bg-card);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.profile-slot-index {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.profile-slot.active .profile-slot-index {
+  color: var(--accent);
+}
+
+.profile-slot-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 当前配置名称：输入框 + "XX / 31 字节" 计数 */
+.profile-name-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.profile-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.profile-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.profile-name-count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 超出 31 字节：变红提醒（失焦后会被自动截断） */
+.profile-name-count.over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* 盲切总开关 */
+.profile-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.profile-switch input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.profile-switch-text {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 760px) {
+  .profile-slot-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-select {
+    max-width: 150px;
+  }
+}
+
+/* ============================================================
+   配置导入与导出（js/pages/config.js）
+     .import-actions                         主板页卡片内的按钮组
+     .import-overlay / .import-modal / ...   选择性导入弹窗
+   配色全部走全局主题变量，亮/暗自动适配
+   ============================================================ */
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* 遮罩层级刻意高于 .dialog-overlay(100)：导入弹窗偶尔需要在弹窗之上再弹提示 */
+.import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.import-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 620px;
+  max-height: calc(100vh - 48px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+/* ---------- 头部 ---------- */
+.import-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.import-title-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.import-title-box h3 {
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+/* 识别结果徽章：单套配置 / 全板完整备份 / 独立宏片段 */
+.import-badge {
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.import-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.import-close:hover {
+  color: var(--text-primary);
+}
+
+/* ---------- 解析告警（折叠） ---------- */
+.import-warn {
+  margin: 10px 18px 0;
+  padding: 9px 12px;
+  border: 1px solid var(--warning);
+  border-radius: 9px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.import-warn summary {
+  cursor: pointer;
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.import-warn ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.import-warn li {
+  margin: 2px 0;
+  line-height: 1.5;
+}
+
+/* ---------- 主体 ---------- */
+.import-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 18px;
+}
+
+.import-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.import-slot-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.import-slot-select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.import-slot-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-item {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-primary);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.import-item:hover {
+  border-color: var(--accent);
+}
+
+.import-item.checked {
+  background: var(--bg-card);
+}
+
+.import-item input[type="checkbox"] {
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.import-item-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  word-break: break-word;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 校准那一行的警告附注（默认不勾选的原因） */
+.import-item-note {
+  flex: 0 0 100%;
+  margin-left: 24px;
+  font-size: 12px;
+  color: var(--warning);
+  line-height: 1.5;
+}
+
+/* ---------- 底部操作栏 ---------- */
+.import-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.import-foot-right {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .import-modal {
+    max-height: calc(100vh - 24px);
+  }
+
+  .import-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .import-foot-right {
+    justify-content: flex-end;
+  }
+}

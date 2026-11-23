@@ -39,11 +39,34 @@ import {
     MACRO_STEP_MS_MAX,
     MACRO_MODE_MAX,
 } from '../tabs/macro.js';
+import {
+    buildSingleProfileExport,
+    buildFullBackupExport,
+    triggerJsonDownload,
+    inspectImportJson,
+    DEFAULT_PROFILE_NAMES,
+} from '../profile_io.js';
 
 const GROUP_POLLING_RATE = 3;
 const GROUP_BUTTON_MAP = 4;
 // 组 4 负载长度：26 个 uint32 小端 = 104 字节
 const BUTTON_MAP_BYTES = 26 * 4;
+
+//--------------------------------------------------------------------+
+// 多配置（与固件 Config/config.h 的 Group 13 / 14 一致）
+//   13 system_global（4 字节）：[active_profile, shortcut_switch_enable, 0, 0]
+//   14 profile_meta（32 字节）：UTF-8 定长配置名，name[0] != 0 且 name[31] == 0
+//--------------------------------------------------------------------+
+const CONFIG_GROUP_SYSTEM_GLOBAL = 13;
+const CONFIG_GROUP_PROFILE_META = 14;
+const PROFILE_COUNT = 4;
+const PROFILE_NAME_BYTES = 32;
+// 可用 UTF-8 字节数：留 1 字节给结尾的 0x00（固件校验 name[31] == 0）
+const PROFILE_NAME_MAX_BYTES = PROFILE_NAME_BYTES - 1;
+
+// 默认配置名（"配置 N"）直接复用 profile_io.js 导出的同一份常量，
+// 避免两处各写一份字符串后悄悄不一致。
+
 const APP_VERSION = 'v0.1.0';
 const MSP_REBOOT_MAGIC = 0x52; // 'R'（与固件 msp_protocol.h 一致）
 
@@ -85,6 +108,11 @@ const MSP_STATUS_INDEX = {
     [MSP_CMD.CALIB_TRACK]: 0,
     [MSP_CMD.CALIB_END]: 0,
     [MSP_CMD.CALIB_CANCEL]: 0,
+    // 切换配置：响应 [active_profile, status]，状态码在下标 1。
+    //   不加这一条的话，固件回 FLASH_ERROR(4) 会被当成"切换成功"。
+    //   ⚠️ 对照：0x1C（PROFILE_GET）的首字节是 active_profile，**不是状态码**，
+    //      绝对不能加进本表，否则 active=1..4 会被误判成失败/成功。
+    [MSP_CMD.PROFILE_SWITCH]: 1,
 };
 
 // 配置模型（默认值来自固件 config.c；连接后会被固件实际值覆盖）
@@ -103,6 +131,11 @@ const model = {
     // 8 个宏槽位（配置组 5~12），每槽 236 字节 / 最多 16 步
     macros: createDefaultMacroSlots(),
     pollRate: 2,
+    // 多配置状态（组 13 / 14 + 0x1C 概览）
+    activeProfile: 0,                 // 当前激活配置 0~3
+    shortcutEnable: true,             // 手柄快捷键盲切总开关（默认开启）
+    profileNames: [...DEFAULT_PROFILE_NAMES], // 4 套配置名（0x1C 与组 14 共同维护）
+    profileName: DEFAULT_PROFILE_NAMES[0],    // 当前激活配置的编辑态名称（对应组 14）
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
 };
@@ -164,6 +197,10 @@ async function readDeviceInfo() {
 }
 
 async function readAllConfigs() {
+    // 先取多配置概览（0x1C）：激活槽位 / 盲切开关 / 4 套名称都要在渲染 Tab 栏前就位。
+    //  老固件不认 0x1C 时这里返回 false，后续组 13/14 仍能把状态补齐（不视为失败）。
+    await readProfiles();
+
     const status = await mspRequest(MSP_CMD.CONFIG_STATUS);
     if (!status) return false;
 
@@ -177,6 +214,8 @@ async function readAllConfigs() {
         });
     }
 
+    // 串行逐组读取：msp.request() 按命令码匹配响应，同命令不能并发，
+    //  否则两帧 CONFIG_GET 会互相"抢走"对方的响应。
     for (const g of groups) {
         const resp = await mspRequest(MSP_CMD.CONFIG_GET, [g.id]);
         if (resp && resp.payload.length >= 2) {
@@ -185,9 +224,16 @@ async function readAllConfigs() {
             else if (g.id === GROUP_GAMEPAD_SETTINGS) parseGamepadSettings(data);
             else if (g.id === GROUP_POLLING_RATE) parsePollingRate(data);
             else if (g.id === GROUP_BUTTON_MAP) parseButtonMap(data);
+            else if (g.id === CONFIG_GROUP_SYSTEM_GLOBAL) parseSystemGlobal(data);
+            else if (g.id === CONFIG_GROUP_PROFILE_META) parseProfileMeta(data);
             else if (g.id >= MACRO_GROUP_BASE && g.id < MACRO_GROUP_BASE + MACRO_SLOT_COUNT) parseMacroSlot(data, g.id - MACRO_GROUP_BASE);
         }
     }
+
+    // 组 13/14 与 0x1C 表达的是同一份状态，但组 14 是"当前套的权威名称"：
+    // 若本次没有读到组 14（老固件），用 0x1C 的结果补齐 model.profileName。
+    if (!model.profileName) model.profileName = model.profileNames[model.activeProfile] || DEFAULT_PROFILE_NAMES[0];
+    model.profileNames[model.activeProfile] = model.profileName;
 
     dirty.clear();
     updateDirtyHint();
@@ -247,6 +293,157 @@ function parseButtonMap(data) {
         map[i] = (raw & DS4_LOGICAL_MASK_ALL) >>> 0;
     }
     model.buttonMap = map;
+}
+
+//--------------------------------------------------------------------+
+// 多配置：组 13 / 14 编解码 + 0x1C 概览解析
+//--------------------------------------------------------------------+
+
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder('utf-8');
+
+/** HTML 转义：配置名来自用户输入，拼进 innerHTML 前必须转义 */
+function escapeHtml(text) {
+    return String(text == null ? '' : text).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+}
+
+/**
+ * 解码 32 字节定长配置名：遇到 0x00 截断，按 UTF-8 解码
+ * @param {ArrayLike<number>} bytes - 长度可不足 32（不足部分按 0 处理）
+ * @param {string} fallbackName - 解出来是空串时使用的兜底名
+ * @returns {string}
+ */
+function decodeUtf8Name(bytes, fallbackName) {
+    const src = bytes || [];
+    // 最多只认前 31 字节：第 32 字节按固件约定恒为 0x00（防止脏数据解码出 32 字节，
+    // 再保存时又被截到 31 字节，造成"读出来和存回去不一致"）
+    const len = Math.min(src.length, PROFILE_NAME_MAX_BYTES);
+
+    let end = len;
+    for (let i = 0; i < len; i++) {
+        if ((src[i] & 0xff) === 0) { end = i; break; }
+    }
+
+    if (end <= 0) return fallbackName;
+
+    let text = '';
+    try {
+        text = utf8Decoder.decode(Uint8Array.from(Array.from({ length: end }, (_, i) => src[i] & 0xff)));
+    } catch (e) {
+        text = '';
+    }
+
+    // 去掉可能混入的控制字符（含半截解码出的 \u0000），再判空
+    text = text.replace(/\u0000/g, '').trim();
+    return text || fallbackName;
+}
+
+/**
+ * 把名称编码成 32 字节定长负载（组 14）
+ *
+ * 关键点：**按码点迭代**（for...of 对字符串是按码点，不是按 UTF-16 码元），
+ * 每个码点整体判断"放进去会不会超过 31 字节"，放不下就停。
+ * 因此永远不会把某个中文字符切成一半（半个 UTF-8 序列会被固件的
+ * validate_profile_meta() 判为非法，或被上位机解成 U+FFFD 乱码）。
+ *
+ * 保证：返回长度恒为 32；下标 31 恒为 0x00；下标 0 非 0（空输入回填默认名）。
+ *
+ * @param {string} nameStr
+ * @returns {number[]} 32 字节
+ */
+function encodeProfileMetaBytes(nameStr) {
+    const fallback = DEFAULT_PROFILE_NAMES[model.activeProfile] || DEFAULT_PROFILE_NAMES[0];
+
+    // 先剔除控制字符（含 \u0000）：名称若以 0x00 开头，固件 validate_profile_meta()
+    //  会因 name[0] == 0 直接拒收；这些字符也无法在输入框里正常显示。
+    let name = String(nameStr == null ? '' : nameStr).replace(/[\u0000-\u001F\u007F]/g, '').trim();
+    if (!name) name = fallback;
+
+    const out = new Array(PROFILE_NAME_BYTES).fill(0);
+    let used = 0;
+
+    for (const ch of name) {
+        const cp = utf8Encoder.encode(ch);
+        if (used + cp.length > PROFILE_NAME_MAX_BYTES) break;
+        for (let i = 0; i < cp.length; i++) out[used++] = cp[i];
+    }
+
+    // 兜底：极端输入（全是不足 1 字节的怪字符）也绝不让 name[0] == 0
+    if (used === 0) {
+        const cp = utf8Encoder.encode(fallback);
+        for (let i = 0; i < cp.length && i < PROFILE_NAME_MAX_BYTES; i++) {
+            out[i] = cp[i];
+            used++;
+        }
+    }
+
+    return out;
+}
+
+/** 名称的 UTF-8 字节长度（用于界面上的 "XX / 31 字节" 提示） */
+function utf8ByteLength(nameStr) {
+    return utf8Encoder.encode(String(nameStr == null ? '' : nameStr)).length;
+}
+
+// 组 13：系统全局 [active_profile, shortcut_switch_enable, reserved0, reserved1]
+function parseSystemGlobal(data) {
+    if (!data || data.length < 4) {
+        console.warn(`system_global 负载长度异常（${data ? data.length : 0} 字节，期望 4），保持当前状态`);
+        return;
+    }
+    const active = data[0];
+    model.activeProfile = (active >= 0 && active < PROFILE_COUNT) ? active : 0;
+    model.shortcutEnable = data[1] !== 0;
+}
+
+// 组 14：当前激活配置的名称（32 字节定长）
+function parseProfileMeta(data) {
+    const name = decodeUtf8Name(
+        (data || []).slice(0, PROFILE_NAME_BYTES),
+        DEFAULT_PROFILE_NAMES[model.activeProfile] || DEFAULT_PROFILE_NAMES[0],
+    );
+    model.profileName = name;
+    model.profileNames[model.activeProfile] = name;
+}
+
+/**
+ * 读取多配置概览（MSP 0x1C，131 字节）
+ *   [0] active_profile  [1] profile_count  [2] shortcut_enable  [3..130] 4 × 32B 名称
+ *   老固件不支持该命令时返回 false（不视为致命错误，继续走组 13/14 的读法）
+ */
+async function readProfiles() {
+    const resp = await mspRequest(MSP_CMD.PROFILE_GET, [], 1200);
+    if (!resp || resp.payload.length < 3 + PROFILE_NAME_BYTES) return false;
+
+    const p = resp.payload;
+
+    const active = p[0];
+    model.activeProfile = (active >= 0 && active < PROFILE_COUNT) ? active : 0;
+    model.shortcutEnable = p[2] !== 0;
+
+    // p[1] 是固件的 CONFIG_PROFILE_COUNT：比本端少的话只覆盖它给出的前几套
+    const count = Math.min(PROFILE_COUNT, p[1] || PROFILE_COUNT);
+    for (let i = 0; i < count; i++) {
+        const off = 3 + i * PROFILE_NAME_BYTES;
+        if (p.length < off + PROFILE_NAME_BYTES) break;
+        model.profileNames[i] = decodeUtf8Name(p.slice(off, off + PROFILE_NAME_BYTES), DEFAULT_PROFILE_NAMES[i]);
+    }
+
+    model.profileName = model.profileNames[model.activeProfile];
+    return true;
+}
+
+/** 顶部下拉框的 <option> 列表（当前激活项 selected） */
+function profileOptionsHtml() {
+    let html = '';
+    for (let i = 0; i < PROFILE_COUNT; i++) {
+        const name = model.profileNames[i] || DEFAULT_PROFILE_NAMES[i];
+        const selected = (i === model.activeProfile) ? ' selected' : '';
+        html += `<option value="${i}"${selected}>${i + 1}: ${escapeHtml(name)}</option>`;
+    }
+    return html;
 }
 
 //--------------------------------------------------------------------+
@@ -449,8 +646,30 @@ async function saveAll() {
         if (!ok) throw new Error(`写入宏 ${slot + 1} 失败`);
     }
 
+    // 全局层（组 13）：激活配置号 + 盲切开关。4 字节，reserved 必须补 0。
+    if (dirty.has(CONFIG_GROUP_SYSTEM_GLOBAL)) {
+        const payload = [
+            CONFIG_GROUP_SYSTEM_GLOBAL,
+            model.activeProfile & 0xff,
+            model.shortcutEnable ? 1 : 0,
+            0,
+            0,
+        ];
+        const ok = await mspRequest(MSP_CMD.CONFIG_SET, payload);
+        if (!ok) throw new Error('写入全局系统设置失败');
+    }
+
+    // 独立配置层（组 14）：当前套的 32 字节定长名称（按 UTF-8 字节截断到 <= 31B）
+    if (dirty.has(CONFIG_GROUP_PROFILE_META)) {
+        const ok = await mspRequest(MSP_CMD.CONFIG_SET, [CONFIG_GROUP_PROFILE_META, ...encodeProfileMetaBytes(model.profileName)]);
+        if (!ok) throw new Error('写入配置名称失败');
+    }
+
     const okSave = await mspRequest(MSP_CMD.CONFIG_SAVE);
     if (!okSave) throw new Error('保存到 Flash 失败');
+
+    // 名称已落盘 → 顶部下拉框与槽位卡片立即跟上（不必等下一次 readAllConfigs）
+    model.profileNames[model.activeProfile] = model.profileName;
 
     dirty.clear();
     updateDirtyHint();
@@ -470,6 +689,80 @@ async function rebootDevice() {
     // 设备即将重启，USB 会断开，主动清理连接状态
     connected = false;
     try { await serial.close(); } catch (e) {}
+    rerenderIfActive();
+}
+
+//--------------------------------------------------------------------+
+// 配置切换（MSP 0x1D）
+//--------------------------------------------------------------------+
+/**
+ * 仅发送 0x1D 切换命令（不重读、不重绘）
+ * @returns {Promise<boolean>} 是否成功（含固件 FLASH_ERROR 判读）
+ */
+async function sendProfileSwitch(target) {
+    const resp = await mspRequest(MSP_CMD.PROFILE_SWITCH, [target]);
+    return !!resp;
+}
+
+/**
+ * 静默切换 + 整份重读（不弹窗、不重绘）
+ *
+ * 从 switchProfile() 里抽出来，供"全板备份逐个槽位采集"复用：
+ *   那条流程不能走 switchProfile()，否则每切一套都会弹"未保存修改"确认框、
+ *   每切一次都整页重绘（备份过程中页面会闪 4 次）。
+ *
+ * @returns {Promise<boolean>} 切换并读取成功
+ */
+async function readProfileIntoRam(target) {
+    if (!(await sendProfileSwitch(target))) return false;
+    return await readAllConfigs();
+}
+
+/**
+ * 切换到指定配置槽位
+ *
+ * 固件侧 config_switch_profile() 的行为：
+ *   1) 不自动保存"当前套尚未 CONFIG_SAVE 的改动"——那些改动只存在 RAM 里，
+ *      会在"配置层回落为目标槽位默认值"这一步被覆盖（= 丢失）；
+ *   2) 切换成功后 RAM 工作集整体换成目标槽位，激活号写入全局层 Flash。
+ * 所以这里必须：先问用户要不要保存 → 再发 0x1D → 再整份重读 → 重绘。
+ *
+ * @param {number} targetIdx - 0 ~ 3
+ */
+async function switchProfile(targetIdx) {
+    const target = Number(targetIdx);
+
+    if (!Number.isInteger(target) || target < 0 || target >= PROFILE_COUNT) return;
+    if (target === model.activeProfile) return;
+    if (!connected) return;
+
+    //--- 1) 未保存改动保护
+    if (dirty.size > 0) {
+        const confirmed = await showConfirm(
+            '切换配置',
+            '当前配置有未保存修改，是否先保存到主板再切换？\n\n选择「取消」将中止切换；若强行切换，这些修改会丢失。'
+        );
+        if (!confirmed) return;
+
+        try {
+            await saveAll();
+        } catch (err) {
+            await showMessage('保存失败', err.message || String(err));
+            return;
+        }
+    }
+
+    //--- 2) 发送切换命令 + 3) 整份重读
+    const ok = await readProfileIntoRam(target);
+    if (!ok) {
+        await showMessage(
+            '切换失败',
+            '设备未响应切换命令，或激活配置号写入 Flash 失败。\n\n请确认设备处于配置（CDC）模式后重试。'
+        );
+        rerenderIfActive();
+        return;
+    }
+
     rerenderIfActive();
 }
 
@@ -570,8 +863,11 @@ export function renderConfigPage(container) {
         ]
         : [];
 
+    // Tab 栏右侧：已连接时放"配置切换下拉框 + 断开"
+    //   .tab-right 是 renderTabBar() 的现成插槽，样式上不会挤压左侧 Tab 项
     const rightHtml = connected
-        ? '<button class="btn-disconnect" id="config-btn-disconnect">断开</button>'
+        ? `<select class="profile-select" id="header-profile-select" title="切换配置槽位（切换后自动重读该套配置）">${profileOptionsHtml()}</select>`
+          + '<button class="btn-disconnect" id="config-btn-disconnect">断开</button>'
         : '<button class="btn-connect" id="config-btn-connect">连接</button>';
 
     const bar = renderTabBar(tabs, currentTab, (key) => {
@@ -596,6 +892,16 @@ export function renderConfigPage(container) {
 
     const disconnectBtn = document.getElementById('config-btn-disconnect');
     if (disconnectBtn) disconnectBtn.addEventListener('click', handleDisconnect);
+
+    const profileSelect = document.getElementById('header-profile-select');
+    if (profileSelect) {
+        profileSelect.addEventListener('change', () => {
+            const target = Number(profileSelect.value);
+            // 切回原值（例如用户点了同一项）不必走切换流程
+            if (target === model.activeProfile) return;
+            switchProfile(target);
+        });
+    }
 
     renderContent(contentEl);
 }
@@ -722,10 +1028,728 @@ function buildStatusBar() {
 }
 
 //--------------------------------------------------------------------+
+// 配置导入 / 导出（UI 接线；数据逻辑全在 js/profile_io.js）
+//--------------------------------------------------------------------+
+
+/** 深拷贝一个宏槽：导入后不能与 inspected 里的对象共享引用 */
+function cloneMacroSlot(slot) {
+    const src = slot || {};
+    const steps = Array.isArray(src.steps) ? src.steps : [];
+
+    return {
+        triggerMask: Number(src.triggerMask) >>> 0,
+        holdMs: Number(src.holdMs) || 0,
+        mode: Number(src.mode) || 0,
+        flags: Number(src.flags) || 0,
+        stepCount: Number(src.stepCount) || 0,
+        steps: Array.from({ length: MACRO_MAX_STEPS }, (_, i) => {
+            const s = steps[i] || {};
+            return {
+                mask: Number(s.mask) >>> 0,
+                lx: Number(s.lx) || 0,
+                ly: Number(s.ly) || 0,
+                rx: Number(s.rx) || 0,
+                ry: Number(s.ry) || 0,
+                durationMs: Number(s.durationMs) || 100,
+            };
+        }),
+    };
+}
+
+/** 深拷贝校准表（4 轴 × min/center/max） */
+function cloneCalib(calib) {
+    const out = {};
+    for (const axis of ['lx', 'ly', 'rx', 'ry']) {
+        const c = (calib && calib[axis]) || {};
+        out[axis] = {
+            min: Number(c.min) || 0,
+            center: Number(c.center) || 2048,
+            max: Number(c.max) || 4095,
+        };
+    }
+    return out;
+}
+
+/** 当前 model 的"配置层快照"（全板备份逐槽采集用） */
+function snapshotCurrentProfile() {
+    return {
+        name: model.profileName,
+        deadzoneLeft: model.deadzoneLeft,
+        deadzoneRight: model.deadzoneRight,
+        invertMask: model.invertMask,
+        debounceMs: model.debounceMs,
+        buttonMap: [...model.buttonMap],
+        macros: model.macros.map(cloneMacroSlot),
+    };
+}
+
+/** [导出当前配置] → `<配置名>_<YYYY-MM-DD>.json` */
+async function handleExportSingle() {
+    if (!connected) {
+        await showMessage('未连接', '请先连接主板后再导出配置。');
+        return;
+    }
+
+    const out = buildSingleProfileExport(model);
+    triggerJsonDownload(out.filename, out.jsonText);
+}
+
+/**
+ * [全板完整备份] → `全板备份_<YYYY-MM-DD>.json`
+ *
+ * 全板备份必须拿到 4 套配置的内容，而设备同一时刻只有一套在 RAM 里，
+ * 所以只能"逐套切过去读一遍"：
+ *   1) 先记下原槽位并把当前套快照下来；
+ *   2) 其余 3 套用 **静默切换**（readProfileIntoRam：不发确认框、不重绘）逐个采集；
+ *   3) finally 里无论成败都切回原槽位并重绘 —— 否则用户会发现自己的配置被悄悄换掉了。
+ */
+async function handleExportFullBackup() {
+    if (!connected) {
+        await showMessage('未连接', '请先连接主板后再备份。');
+        return;
+    }
+
+    if (dirty.size > 0) {
+        const confirmed = await showConfirm(
+            '全板完整备份',
+            '当前配置有未保存修改，全板备份将从主板读取最新已保存数据，是否先保存当前修改？'
+        );
+        if (!confirmed) return;
+
+        try {
+            await saveAll();
+        } catch (err) {
+            await showMessage('保存失败', err.message || String(err));
+            return;
+        }
+    }
+
+    const originSlot = model.activeProfile;
+    const allProfiles = new Array(PROFILE_COUNT).fill(null);
+
+    allProfiles[originSlot] = snapshotCurrentProfile();
+
+    let restoreFailed = false;
+
+    try {
+        for (let i = 0; i < PROFILE_COUNT; i++) {
+            if (i === originSlot) continue;
+
+            const readOk = await readProfileIntoRam(i);
+            if (!readOk) continue; // 读不到就留空：导出时按默认值填充并在 warnings 里标注
+
+            allProfiles[i] = snapshotCurrentProfile();
+        }
+    } finally {
+        restoreFailed = !(await readProfileIntoRam(originSlot));
+        rerenderIfActive();
+    }
+
+    const out = buildFullBackupExport(model, allProfiles);
+    triggerJsonDownload(out.filename, out.jsonText);
+
+    if (restoreFailed) {
+        await showMessage(
+            '备份已下载，但未切回原配置',
+            '全板备份文件已下载，但切回原配置槽位失败。\n\n请断开后重新连接设备，确认当前处于目标配置。'
+        );
+    } else if (out.data && Array.isArray(out.data.warnings) && out.data.warnings.length) {
+        await showMessage('全板备份已完成', `已下载 ${out.filename}\n\n${out.data.warnings.join('\n')}`);
+    }
+}
+
+/** [导入配置文件...]：选文件 → 解析 → 打开选择性导入弹窗 */
+function handleImportFile() {
+    if (!connected) {
+        showMessage('未连接', '请先连接主板后再导入配置。');
+        return;
+    }
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.style.display = 'none';
+
+    input.addEventListener('change', async () => {
+        const file = input.files && input.files[0];
+        input.remove();
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const inspected = inspectImportJson(text);
+
+            if (!inspected.ok) {
+                await showMessage('导入失败', inspected.error || '文件格式无法识别');
+                return;
+            }
+
+            openImportModal(inspected);
+        } catch (err) {
+            await showMessage('导入失败', err.message || String(err));
+        }
+    });
+
+    document.body.appendChild(input);
+
+    // 用户点了"取消"（关闭文件选择框）时不会触发 change，靠 cancel 事件回收这个临时 input，
+    // 否则反复取消会在 body 里堆积一堆隐藏元素
+    input.addEventListener('cancel', () => input.remove());
+
+    input.click();
+}
+
+/**
+ * 把一个已解析的导入结果展开成"可勾选的模块清单"
+ *
+ * 每个模块 = 一个配置组（1/2/3/4/13/14 或 5~12 的某一槽宏），
+ * 勾选后由 applyImport() 依次调用 apply() 写入 model 并 markDirty(groupId)。
+ *
+ * @param {Object} inspected - inspectImportJson() 的结果
+ * @param {number} sourceSlot - full_backup 时用户选的源槽位；其它类型传 0
+ * @returns {Array<{key:string, groupId:number, label:string, checked:boolean, note?:string, apply:Function}>}
+ */
+function buildImportModules(inspected, sourceSlot) {
+    const modules = [];
+
+    //--- 全局硬件层（仅全板备份有）
+    if (inspected.kind === 'full_backup') {
+        const g = inspected.systemGlobal || {};
+        const hw = inspected.hardware || {};
+
+        if (g.shortcutEnable !== null && g.shortcutEnable !== undefined) {
+            modules.push({
+                key: 'shortcut',
+                groupId: CONFIG_GROUP_SYSTEM_GLOBAL,
+                label: `手柄快捷键盲切开关（${g.shortcutEnable ? '开启' : '关闭'}）`,
+                checked: true,
+                apply: () => { model.shortcutEnable = !!g.shortcutEnable; },
+            });
+        }
+
+        if (hw.pollRate !== null && hw.pollRate !== undefined) {
+            modules.push({
+                key: 'pollRate',
+                groupId: GROUP_POLLING_RATE,
+                label: `USB 回报率设置（${POLL_RATE_NAMES[hw.pollRate] || `档位 ${hw.pollRate}`}）`,
+                checked: true,
+                apply: () => { model.pollRate = hw.pollRate; },
+            });
+        }
+
+        if (hw.calib) {
+            modules.push({
+                key: 'calib',
+                groupId: GROUP_JOYSTICK_CALIB,
+                label: '摇杆硬件中心与极限校准',
+                // 默认不勾：不同主板的电位器零点/极限都不一样，照搬别人主板的校准会让摇杆偏移
+                checked: false,
+                note: '警告：不同主板电位器零点不同，除非恢复到原同一块主板，否则请勿勾选',
+                apply: () => { model.calib = cloneCalib(hw.calib); },
+            });
+        }
+    }
+
+    //--- 独立宏片段：只有宏
+    if (inspected.kind === 'macros_fragment') {
+        for (const m of inspected.macros) {
+            if (!m.valid) continue;
+            modules.push({
+                key: `macro:${m.slotIndex}`,
+                groupId: MACRO_GROUP_BASE + m.slotIndex,
+                label: `宏 ${m.slotIndex + 1}：${m.summary}`,
+                checked: true,
+                apply: () => { model.macros[m.slotIndex] = cloneMacroSlot(m.slot); },
+            });
+        }
+        return modules;
+    }
+
+    //--- 配置层（single_profile 的本体 / full_backup 的源槽位）
+    const profile = inspected.profiles[sourceSlot] || inspected.profiles[0];
+    if (!profile) return modules;
+
+    modules.push({
+        key: 'meta',
+        groupId: CONFIG_GROUP_PROFILE_META,
+        label: `配置名称（${profile.name}）`,
+        checked: true,
+        apply: () => {
+            model.profileName = profile.name;
+            model.profileNames[model.activeProfile] = profile.name;
+        },
+    });
+
+    modules.push({
+        key: 'settings',
+        groupId: GROUP_GAMEPAD_SETTINGS,
+        label: '摇杆死区、轴反转与按键消抖',
+        checked: true,
+        apply: () => {
+            const s = profile.gamepadSettings;
+            model.deadzoneLeft = s.deadzoneLeft;
+            model.deadzoneRight = s.deadzoneRight;
+            model.invertMask = s.invertMask;
+            model.debounceMs = s.debounceMs;
+        },
+    });
+
+    modules.push({
+        key: 'buttons',
+        groupId: GROUP_BUTTON_MAP,
+        label: '26 路按键映射表',
+        checked: true,
+        apply: () => { model.buttonMap = [...profile.buttonMap]; },
+    });
+
+    for (const m of profile.macroList) {
+        if (!m.valid) continue;   // 空槽位不列出来，避免用户误以为"导入了空宏"
+        modules.push({
+            key: `macro:${m.slotIndex}`,
+            groupId: MACRO_GROUP_BASE + m.slotIndex,
+            label: `宏 ${m.slotIndex + 1}：${m.summary}`,
+            checked: true,
+            apply: () => { model.macros[m.slotIndex] = cloneMacroSlot(m.slot); },
+        });
+    }
+
+    return modules;
+}
+
+/**
+ * 选择性导入弹窗
+ *
+ * 只改内存（model）+ 点亮 dirty，绝不在这里写 Flash：用户还能点底边栏 [保存] 二次确认，
+ * 也能直接切走页签放弃。
+ *
+ * @param {Object} inspected - inspectImportJson() 的结果
+ */
+function openImportModal(inspected) {
+    const KIND_LABEL = {
+        single_profile: '单套配置',
+        full_backup: '全板完整备份',
+        macros_fragment: '独立宏片段',
+    };
+
+    const state = {
+        sourceSlot: (inspected.kind === 'full_backup' && Number.isInteger(inspected.activeProfile))
+            ? inspected.activeProfile
+            : 0,
+        checked: new Map(),
+    };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'import-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'import-modal';
+    overlay.appendChild(modal);
+
+    //---- 头部：标题 + 识别徽章 + 关闭
+    const head = document.createElement('div');
+    head.className = 'import-head';
+
+    const titleBox = document.createElement('div');
+    titleBox.className = 'import-title-box';
+
+    const title = document.createElement('h3');
+    title.textContent = '导入配置';
+
+    const badge = document.createElement('span');
+    badge.className = 'import-badge';
+    badge.textContent = KIND_LABEL[inspected.kind] || '未知格式';
+
+    titleBox.appendChild(title);
+    titleBox.appendChild(badge);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'import-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = '关闭';
+
+    head.appendChild(titleBox);
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    //---- 解析告警（折叠，默认收起）
+    if (inspected.warnings && inspected.warnings.length) {
+        const warn = document.createElement('details');
+        warn.className = 'import-warn';
+
+        const summary = document.createElement('summary');
+        summary.textContent = `解析告警（${inspected.warnings.length} 条，点击展开）`;
+        warn.appendChild(summary);
+
+        const ul = document.createElement('ul');
+        for (const w of inspected.warnings) {
+            const li = document.createElement('li');
+            li.textContent = w;
+            ul.appendChild(li);
+        }
+        warn.appendChild(ul);
+        modal.appendChild(warn);
+    }
+
+    //---- 主体（随源槽位切换重建）
+    const body = document.createElement('div');
+    body.className = 'import-body';
+    modal.appendChild(body);
+
+    //---- 底部操作栏
+    const foot = document.createElement('div');
+    foot.className = 'import-foot';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'btn';
+    toggleBtn.textContent = '全选 / 取消全选';
+
+    const rightBox = document.createElement('div');
+    rightBox.className = 'import-foot-right';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn';
+    cancelBtn.textContent = '取消';
+
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.className = 'btn-primary';
+    applyBtn.textContent = '应用到当前配置';
+
+    rightBox.appendChild(cancelBtn);
+    rightBox.appendChild(applyBtn);
+    foot.appendChild(toggleBtn);
+    foot.appendChild(rightBox);
+    modal.appendChild(foot);
+
+    let modules = [];
+
+    const close = () => overlay.remove();
+
+    const renderBody = (resetChecks) => {
+        modules = buildImportModules(inspected, state.sourceSlot);
+
+        // 每次重建视图都回到"默认勾选"（校准仍然默认不勾），避免切换源槽位后残留上一次的勾选
+        if (resetChecks) {
+            state.checked.clear();
+            for (const m of modules) state.checked.set(m.key, m.checked !== false);
+        }
+
+        body.innerHTML = '';
+
+        // 源槽位选择器（仅全板备份）
+        if (inspected.kind === 'full_backup') {
+            const slotRow = document.createElement('div');
+            slotRow.className = 'import-slot-row';
+
+            const slotLabel = document.createElement('span');
+            slotLabel.className = 'import-slot-label';
+            slotLabel.textContent = '选择源配置槽位';
+
+            const select = document.createElement('select');
+            select.className = 'import-slot-select';
+
+            for (let i = 0; i < PROFILE_COUNT; i++) {
+                const p = inspected.profiles[i];
+                const opt = document.createElement('option');
+                opt.value = String(i);
+                opt.textContent = `${i + 1}: ${p ? p.name : DEFAULT_PROFILE_NAMES[i]}`;
+                if (i === state.sourceSlot) opt.selected = true;
+                select.appendChild(opt);
+            }
+
+            select.addEventListener('change', () => {
+                state.sourceSlot = Number(select.value) || 0;
+                renderBody(true);   // 换源配置 → 勾选列表重新按默认初始化
+            });
+
+            slotRow.appendChild(slotLabel);
+            slotRow.appendChild(select);
+            body.appendChild(slotRow);
+        }
+
+        const list = document.createElement('div');
+        list.className = 'import-list';
+
+        if (!modules.length) {
+            const empty = document.createElement('p');
+            empty.className = 'placeholder-text';
+            empty.textContent = (inspected.kind === 'macros_fragment')
+                ? '这个片段里没有可导入的有效宏。'
+                : '这个文件里没有可导入的配置项。';
+            list.appendChild(empty);
+        }
+
+        for (const m of modules) {
+            const row = document.createElement('label');
+            row.className = 'import-item';
+
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = state.checked.get(m.key) !== false;
+
+            const text = document.createElement('span');
+            text.className = 'import-item-text';
+            text.textContent = m.label;
+
+            cb.addEventListener('change', () => {
+                state.checked.set(m.key, cb.checked);
+                row.classList.toggle('checked', cb.checked);
+            });
+
+            row.appendChild(cb);
+            row.appendChild(text);
+
+            if (m.note) {
+                const note = document.createElement('span');
+                note.className = 'import-item-note';
+                note.textContent = m.note;
+                row.appendChild(note);
+            }
+
+            row.classList.toggle('checked', cb.checked);
+            list.appendChild(row);
+        }
+
+        body.appendChild(list);
+    };
+
+    toggleBtn.addEventListener('click', () => {
+        const allChecked = modules.length > 0
+            && modules.every((m) => state.checked.get(m.key) !== false);
+
+        for (const m of modules) state.checked.set(m.key, !allChecked);
+        renderBody(false);   // 保留刚设置的勾选状态，只重建 DOM
+    });
+
+    applyBtn.addEventListener('click', async () => {
+        const picked = modules.filter((m) => state.checked.get(m.key) !== false);
+
+        if (!picked.length) {
+            await showMessage('未选择任何项目', '请至少勾选一项后再应用。');
+            return;
+        }
+
+        // 只改内存 + 点亮脏标记：写 Flash 由用户点底边栏 [保存] 触发
+        for (const m of picked) {
+            if (typeof m.apply === 'function') m.apply();
+            markDirty(m.groupId);
+        }
+
+        close();
+        rerenderIfActive();
+
+        await showMessage(
+            '已应用',
+            '已应用勾选的配置项，请点击页面底部 [保存] 按钮写入主板 Flash。'
+        );
+    });
+
+    cancelBtn.addEventListener('click', close);
+    closeBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) close();   // 点遮罩空白处关闭
+    });
+
+    renderBody(true);
+    document.body.appendChild(overlay);
+}
+
+/**
+ * 「配置导入与导出」卡片（主板页）
+ * 三个入口：导出当前配置 / 全板完整备份 / 导入配置文件
+ */
+function buildImportExportCard() {
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    card.innerHTML = '<h3>配置导入与导出</h3>';
+
+    const row = document.createElement('div');
+    row.className = 'import-actions';
+
+    const mk = (label, cls, onClick) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = cls;
+        btn.textContent = label;
+        btn.addEventListener('click', onClick);
+        return btn;
+    };
+
+    row.appendChild(mk('导出当前配置', 'btn', handleExportSingle));
+    row.appendChild(mk('全板完整备份', 'btn', handleExportFullBackup));
+    row.appendChild(mk('导入配置文件...', 'btn-primary', handleImportFile));
+    card.appendChild(row);
+
+    const hint = document.createElement('p');
+    hint.className = 'placeholder-text';
+    hint.textContent = '「导出当前配置」只包含当前激活的那一套；「全板完整备份」会逐套切换读取（过程中请勿操作手柄），'
+        + '完成后自动切回原配置。导入只写入本页内存，勾选后仍需点击页面底部 [保存] 才会写入主板 Flash。';
+    card.appendChild(hint);
+
+    return card;
+}
+
+//--------------------------------------------------------------------+
 // 主板 Tab
 //--------------------------------------------------------------------+
+
+/**
+ * 「配置与快捷键」卡片（组 13 / 14 + 0x1D）
+ *   - 4 个槽位按钮：显示 "配置 N" + 自定义名，高亮当前槽位，点击切换
+ *   - 当前配置名称：输入框 + "XX / 31 字节" 实时提示（超长按字节截断，防多字节中文被切半）
+ *   - 手柄快捷键盲切总开关：写组 13 的 shortcut_switch_enable
+ */
+function buildProfileCard() {
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    card.innerHTML = '<h3>配置与快捷键</h3>';
+
+    //--- 1) 槽位切换
+    const grid = document.createElement('div');
+    grid.className = 'profile-slot-grid';
+
+    for (let i = 0; i < PROFILE_COUNT; i++) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `profile-slot${i === model.activeProfile ? ' active' : ''}`;
+
+        const idxEl = document.createElement('span');
+        idxEl.className = 'profile-slot-index';
+        idxEl.textContent = `配置 ${i + 1}`;
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'profile-slot-name';
+        nameEl.textContent = model.profileNames[i] || DEFAULT_PROFILE_NAMES[i];
+
+        btn.appendChild(idxEl);
+        btn.appendChild(nameEl);
+        btn.addEventListener('click', () => {
+            if (i === model.activeProfile) return;
+            switchProfile(i);
+        });
+
+        grid.appendChild(btn);
+    }
+    card.appendChild(grid);
+
+    //--- 2) 当前配置名称
+    const nameRow = document.createElement('div');
+    nameRow.className = 'config-row';
+
+    const nameLabel = document.createElement('span');
+    nameLabel.className = 'config-label';
+    nameLabel.textContent = '当前配置名称';
+    nameRow.appendChild(nameLabel);
+
+    const nameInputBox = document.createElement('div');
+    nameInputBox.className = 'config-input profile-name-box';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'profile-name-input';
+    nameInput.value = model.profileName;
+    nameInput.placeholder = `最多 ${PROFILE_NAME_MAX_BYTES} 字节（约 10 个汉字）`;
+    nameInput.spellcheck = false;
+
+    const nameCount = document.createElement('span');
+    nameCount.className = 'profile-name-count';
+
+    const updateNameCount = () => {
+        const bytes = utf8ByteLength(nameInput.value);
+        nameCount.textContent = `${bytes} / ${PROFILE_NAME_MAX_BYTES} 字节`;
+        nameCount.classList.toggle('over', bytes > PROFILE_NAME_MAX_BYTES);
+    };
+
+    nameInput.addEventListener('input', () => {
+        model.profileName = nameInput.value;
+        markDirty(CONFIG_GROUP_PROFILE_META);
+        updateNameCount();
+    });
+
+    // 失焦时按"UTF-8 字节安全截断"规整一次：
+    //   用户可能输入超长文本，直接在保存时静默截断会造成"看到的 ≠ 存下的"，
+    //   这里立刻把输入框改成真正会被写进 Flash 的内容。
+    nameInput.addEventListener('blur', () => {
+        const normalized = decodeUtf8Name(
+            encodeProfileMetaBytes(model.profileName),
+            DEFAULT_PROFILE_NAMES[model.activeProfile] || DEFAULT_PROFILE_NAMES[0],
+        );
+        if (normalized !== model.profileName) {
+            model.profileName = normalized;
+            nameInput.value = normalized;
+            markDirty(CONFIG_GROUP_PROFILE_META);
+        }
+        updateNameCount();
+    });
+
+    updateNameCount();
+
+    nameInputBox.appendChild(nameInput);
+    nameInputBox.appendChild(nameCount);
+    nameRow.appendChild(nameInputBox);
+    card.appendChild(nameRow);
+
+    const nameHint = document.createElement('p');
+    nameHint.className = 'placeholder-text';
+    nameHint.textContent = '名称按 UTF-8 字节定长存储（最多 31 字节 + 结尾 0），修改后点击底边栏 [保存] 写入当前配置；'
+        + '顶部下拉框与槽位卡片会立即同步显示。';
+    card.appendChild(nameHint);
+
+    //--- 3) 手柄快捷键盲切总开关
+    const swRow = document.createElement('div');
+    swRow.className = 'config-row';
+
+    const swLabel = document.createElement('span');
+    swLabel.className = 'config-label';
+    swLabel.textContent = '手柄快捷键盲切';
+    swRow.appendChild(swLabel);
+
+    const swInputBox = document.createElement('div');
+    swInputBox.className = 'config-input';
+
+    const swWrap = document.createElement('label');
+    swWrap.className = 'profile-switch';
+
+    const swInput = document.createElement('input');
+    swInput.type = 'checkbox';
+    swInput.checked = !!model.shortcutEnable;
+
+    const swText = document.createElement('span');
+    swText.className = 'profile-switch-text';
+    swText.textContent = swInput.checked ? '已开启' : '已关闭';
+
+    swInput.addEventListener('change', () => {
+        model.shortcutEnable = swInput.checked;
+        swText.textContent = swInput.checked ? '已开启' : '已关闭';
+        markDirty(CONFIG_GROUP_SYSTEM_GLOBAL);
+    });
+
+    swWrap.appendChild(swInput);
+    swWrap.appendChild(swText);
+    swInputBox.appendChild(swWrap);
+    swRow.appendChild(swInputBox);
+    card.appendChild(swRow);
+
+    const swHint = document.createElement('p');
+    swHint.className = 'placeholder-text';
+    swHint.textContent = '开启后，在游戏模式下长按 Share + △ / □ / ○ / × 满 3 秒可盲切至配置 1 / 2 / 3 / 4'
+        + '（切换后自动写入主板记忆，下次上电沿用）。';
+    card.appendChild(swHint);
+
+    return card;
+}
+
 function renderBoardTab(contentEl) {
     contentEl.innerHTML = '';
+
+    // 配置与快捷键（组 13 / 14，MSP 0x1C / 0x1D）
+    contentEl.appendChild(buildProfileCard());
+
+    // 配置导入与导出（JSON 备份 / 选择性导入）
+    contentEl.appendChild(buildImportExportCard());
 
     // 回报率设置
     const rateCard = document.createElement('div');
