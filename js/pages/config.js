@@ -6,7 +6,7 @@
  * - 配置组：
  *   1 joystick_calib（24 字节）：LX/LY/RX/RY 各 {min, center, max}（u16 LE）
  *   2 gamepad_settings（6 字节）：deadzone_left / deadzone_right（u16 LE，0~2047 ADC count）
- *                                + invert_mask（u8，bit0~3 = LX/LY/RX/RY）+ _reserved（u8，恒 0）
+ *                                + invert_mask（u8，bit0~3 = LX/LY/RX/RY）+ debounce_ms（u8，0~50ms）
  *   3 polling_rate（1 字节）：level
  * - 修改后点击 [保存] 写入固件（CONFIG_SET + CONFIG_SAVE）
  */
@@ -37,6 +37,11 @@ const INVERT_LY = 1 << 1; // 0x02
 const INVERT_RX = 1 << 2; // 0x04
 const INVERT_RY = 1 << 3; // 0x08
 const INVERT_MASK_ALL = 0x0f;
+
+// 按键消抖时间边界（与固件 Config/config.h 的 CONFIG_DEBOUNCE_MAX_MS、
+// Config/config.c 的 gamepadSettingsDefault.debounce_ms 一致）
+const DEBOUNCE_MAX_MS = 50;
+const DEBOUNCE_DEFAULT_MS = 4;
 
 //--------------------------------------------------------------------+
 // 固件响应中的状态码位置（按命令码索引）
@@ -69,6 +74,7 @@ const model = {
     deadzoneLeft: DEADZONE_DEFAULT,    // 左摇杆死区（0~2047 ADC count，LX/LY 共用）
     deadzoneRight: DEADZONE_DEFAULT,   // 右摇杆死区（0~2047 ADC count，RX/RY 共用）
     invertMask: 0,                     // 轴向反转位掩码（bit0=LX bit1=LY bit2=RX bit3=RY）
+    debounceMs: DEBOUNCE_DEFAULT_MS,   // 按键消抖时间（0~50ms，0 = 关闭消抖直通）
     pollRate: 2,
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
@@ -175,17 +181,19 @@ function parseCalib(data) {
 
 function parseGamepadSettings(data) {
     // 固件 GamepadSettings = { u16 deadzone_left; u16 deadzone_right;
-    //                          u8 invert_mask; u8 _reserved; }（6 字节小端）
+    //                          u8 invert_mask; u8 debounce_ms; }（6 字节小端）
     if (!data || data.length < 6) {
-        console.warn(`gamepad_settings 负载长度异常（${data ? data.length : 0} 字节，期望 6），回落到默认 ${DEADZONE_DEFAULT}/${DEADZONE_DEFAULT}/0`);
+        console.warn(`gamepad_settings 负载长度异常（${data ? data.length : 0} 字节，期望 6），回落到默认 ${DEADZONE_DEFAULT}/${DEADZONE_DEFAULT}/0/${DEBOUNCE_DEFAULT_MS}`);
         model.deadzoneLeft = DEADZONE_DEFAULT;
         model.deadzoneRight = DEADZONE_DEFAULT;
         model.invertMask = 0;
+        model.debounceMs = DEBOUNCE_DEFAULT_MS;
         return;
     }
     model.deadzoneLeft = u16(data, 0);
     model.deadzoneRight = u16(data, 2);
-    model.invertMask = data[4] & INVERT_MASK_ALL;   // 第 6 字节 _reserved 不参与 UI
+    model.invertMask = data[4] & INVERT_MASK_ALL;
+    model.debounceMs = Math.min(DEBOUNCE_MAX_MS, data[5]);   // 固件侧上限 50，读时再兜一层
 }
 
 function parsePollingRate(data) {
@@ -204,13 +212,15 @@ function buildCalibBytes() {
     return out;
 }
 
-// 组 2 负载：{ deadzone_left: u16 LE, deadzone_right: u16 LE, invert_mask: u8, _reserved: u8 } = 6 字节
-//   末尾的 _reserved 必须显式补 0：固件 validate_gamepad_settings() 会拒绝第 6 字节非零的载荷。
+// 组 2 负载：{ deadzone_left: u16 LE, deadzone_right: u16 LE, invert_mask: u8, debounce_ms: u8 } = 6 字节
+//   第 6 字节是按键消抖时间（0~50ms），必须钳位后再发：固件 validate_gamepad_settings()
+//   会拒绝 > 50 的取值，直接回 INVALID_DATA。
 function buildGamepadSettingsBytes() {
     const l = model.deadzoneLeft & 0xffff;
     const r = model.deadzoneRight & 0xffff;
     const inv = model.invertMask & INVERT_MASK_ALL;
-    return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff, inv, 0];
+    const deb = Math.min(DEBOUNCE_MAX_MS, Math.max(0, Math.round(Number(model.debounceMs) || 0))) & 0xff;
+    return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff, inv, deb];
 }
 
 //--------------------------------------------------------------------+
@@ -413,7 +423,9 @@ function renderContent(contentEl) {
 
     switch (currentTab) {
         case 'buttons':
-            renderButtonsTab(contentEl);
+            // 按键页签除只读映射表外，还承载"按键消抖时间"设置（组 2 的一部分），
+            // 因此需要 model 与 markDirty，调用规范与摇杆页签保持一致。
+            renderButtonsTab(contentEl, model, { markDirty });
             break;
         case 'joystick': {
             const ctx = {
