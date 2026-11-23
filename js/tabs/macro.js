@@ -204,6 +204,61 @@ function ensureStepsArray(slot) {
     slot.steps = out;
 }
 
+/**
+ * 把任意来源的宏对象（JSON 导入 / 手改文件 / 旧版本数据）收敛到固件 validate_macro_slot() 的合法域
+ *
+ * 与 UI 的 ensureModel() 共用同一套 clampInt / normalizeStep，保证"导入得到的槽位"
+ * 与"界面上现存的槽位"在编码后是完全同构的 236 字节。
+ *
+ * 处理规则（逐条对应固件 Config/config.c 的 macro_slot_validate）：
+ *   - triggerMask : 只保留 bit0~25（MACRO_TRIGGER_MASK_ALL）
+ *   - holdMs      : 0 ~ 10000
+ *   - mode        : 0 ~ 2
+ *   - flags       : 只保留 bit0（BLOCK_TRIGGER），其余位清零
+ *   - stepCount   : 0 ~ 16；输入未给 stepCount 时按 steps 数组长度推断
+ *   - 每步        : mask 只留 bit1~18、四轴 -2048~2047、durationMs 1~65535（严禁 0）
+ *
+ * 返回值里的 valid 表示"这是不是一条会被固件真正执行的宏"（绑了触发键且至少 1 步）；
+ * 导入时用它决定是否列进"逐条勾选"清单，空槽位不会被误当成可导入项。
+ *
+ * @param {*} rawSlot - 任意来源的宏对象
+ * @returns {{ slot: Object, valid: boolean, reason: string }}
+ */
+export function normalizeMacroSlot(rawSlot) {
+    const slot = createDefaultMacroSlot();
+
+    if (!rawSlot || typeof rawSlot !== 'object' || Array.isArray(rawSlot)) {
+        return { slot, valid: false, reason: '不是宏对象' };
+    }
+
+    const rawSteps = Array.isArray(rawSlot.steps) ? rawSlot.steps : [];
+
+    slot.triggerMask = (Number(rawSlot.triggerMask) & MACRO_TRIGGER_MASK_ALL) >>> 0;
+    slot.holdMs = clampInt(rawSlot.holdMs, 0, MACRO_HOLD_MS_MAX, 0);
+    // mode 是枚举而不是连续量：非法值不能"钳到最大值"（那会变成 TOGGLE 开关切换，
+    //   语义完全不同），一律回落到默认的 0 = 单次执行。
+    {
+        const rawMode = Number(rawSlot.mode);
+        slot.mode = (Number.isInteger(rawMode) && rawMode >= 0 && rawMode <= MACRO_MODE_MAX) ? rawMode : 0;
+    }
+    slot.flags = Number(rawSlot.flags) & MACRO_FLAG_BLOCK_TRIGGER;
+
+    // 没给 stepCount 就按 steps 数组长度推断（精简片段里常见：只给 steps 数组）
+    const stepCount = (rawSlot.stepCount === undefined || rawSlot.stepCount === null)
+        ? Math.min(MACRO_MAX_STEPS, rawSteps.length)
+        : clampInt(rawSlot.stepCount, 0, MACRO_MAX_STEPS, 0);
+
+    slot.stepCount = stepCount;
+    slot.steps = Array.from({ length: MACRO_MAX_STEPS }, (_, i) => normalizeStep(rawSteps[i]));
+
+    const valid = (slot.triggerMask !== 0) && (slot.stepCount > 0);
+    let reason = '';
+    if (slot.triggerMask === 0) reason = '未绑定触发键';
+    else if (slot.stepCount === 0) reason = '步数为 0';
+
+    return { slot, valid, reason };
+}
+
 function getSlot() {
     const model = modelRef;
     if (!model) return createDefaultMacroSlot();
