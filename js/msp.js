@@ -30,6 +30,13 @@ export const MSP_CMD = {
     //   [4..5]u16 lx / [6..7]u16 ly / [8..9]u16 rx / [10..11]u16 ry（12-bit 映射输出）
     //   [12..15]u32 设备微秒时间戳（主机按无符号差值算间隔，回绕安全）
     INPUT_SNAPSHOT: 0x1B,
+    // 多配置（全局硬件层 + 4 套独立配置）
+    //   0x1C PROFILE_GET：空载荷；响应 131 字节
+    //        [0]active_profile [1]profile_count [2]shortcut_enable [3..130]4 × 32B 名称
+    //        注意：首字节是"当前激活配置号"，**不是状态码**（不要放进 MSP_STATUS_INDEX）
+    //   0x1D PROFILE_SWITCH：请求 [idx]（0~3）；响应 [active_profile, status]
+    PROFILE_GET:    0x1C,
+    PROFILE_SWITCH: 0x1D,
 };
 
 // 状态码
