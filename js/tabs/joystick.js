@@ -3,6 +3,7 @@
  *
  * 二级 Tab：左摇杆 / 右摇杆
  * - 死区：12-bit ADC 计数死区（0~2047），左右独立（左页签写 deadzone_left，右页签写 deadzone_right）
+ * - 轴向反转：X/Y 轴独立 checkbox，写 model.invertMask 的 bit0~3（后置反转，切换无需重校准）
  * - 中心校准：手动输入 min/center/max + 四步校准向导
  * - 校准向导：CALIB_START → CALIB_SAMPLE(回中采样) → CALIB_TRACK(转满圈) → CALIB_END(保存)
  * - 实时显示：轮询 JOYSTICK_RAW 显示 4 轴逻辑原始值 / 映射值
@@ -37,6 +38,15 @@ const AXES = [
     { key: 'rx', name: 'RX' },
     { key: 'ry', name: 'RY' },
 ];
+
+// 轴 → 反转掩码位（与固件 Config/config.h 的 JOYSTICK_INVERT_LX/LY/RX/RY 一致）
+const AXIS_INVERT_BIT = {
+    lx: 1 << 0,
+    ly: 1 << 1,
+    rx: 1 << 2,
+    ry: 1 << 3,
+};
+const INVERT_MASK_ALL = 0x0f;
 
 // 校准向导步骤（客户端状态）：0=空闲 1=已开始 2=已采样中心 3=跟踪中
 let wizardStep = 0;
@@ -125,6 +135,14 @@ export function renderJoystickTab(container, model, ctx) {
             : deadzoneRow('deadzoneRight', '右摇杆死区（RX / RY 共用）'));
         parent.appendChild(sectionDeadzone);
 
+        // 轴向反转：作用于固件"死区满量程映射之后"的最终输出
+        //   切换反转不需要重新校准摇杆（标定坐标系与 raw 都不动），中点恒为 2048
+        if (!Number.isFinite(model.invertMask)) model.invertMask = 0;
+        const sectionInvert = section('轴向反转');
+        sectionInvert.appendChild(isLeft ? invertRow('lx') : invertRow('rx'));
+        sectionInvert.appendChild(isLeft ? invertRow('ly') : invertRow('ry'));
+        parent.appendChild(sectionInvert);
+
         const sectionCalib = section('中心校准（手动）');
         sectionCalib.appendChild(calibRow('中心值 X', model.calib[xAxis], 'center'));
         sectionCalib.appendChild(calibRow('中心值 Y', model.calib[yAxis], 'center'));
@@ -196,6 +214,48 @@ export function renderJoystickTab(container, model, ctx) {
         input.appendChild(slider);
         input.appendChild(stepper);
         input.appendChild(rangeEl);
+        row.appendChild(input);
+        return row;
+    }
+
+    // 轴向反转开关行：checkbox 直接读写 model.invertMask 的对应位
+    //   axisKey ∈ {'lx','ly','rx','ry'}，位序与固件 bit0~3 一一对应
+    function invertRow(axisKey) {
+        const bit = AXIS_INVERT_BIT[axisKey];
+
+        const row = document.createElement('div');
+        row.className = 'config-row';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'config-label';
+        labelEl.textContent = `${axisKey.toUpperCase()} 轴反转`;
+        row.appendChild(labelEl);
+
+        const input = document.createElement('div');
+        input.className = 'config-input';
+
+        // 复用现有 css 变量做内联样式，避免为一行 checkbox 改全局样式表
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-primary);cursor:pointer;user-select:none;';
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.style.cssText = 'width:16px;height:16px;accent-color:var(--accent);cursor:pointer;';
+        box.checked = (model.invertMask & bit) !== 0;
+
+        const stateEl = document.createElement('span');
+        stateEl.textContent = box.checked ? '已反转' : '正常';
+
+        box.addEventListener('change', () => {
+            if (box.checked) model.invertMask |= bit;
+            else model.invertMask &= ~bit;
+            model.invertMask &= INVERT_MASK_ALL;   // 只保留 bit0~3
+            stateEl.textContent = box.checked ? '已反转' : '正常';
+            ctx.markDirty(GROUP_GAMEPAD_SETTINGS);
+        });
+
+        label.appendChild(box);
+        label.appendChild(stateEl);
+        input.appendChild(label);
         row.appendChild(input);
         return row;
     }

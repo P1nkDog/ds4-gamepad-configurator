@@ -5,7 +5,8 @@
  * - 连接后自动读取设备信息（API/变体/固件版本）与所有配置组
  * - 配置组：
  *   1 joystick_calib（24 字节）：LX/LY/RX/RY 各 {min, center, max}（u16 LE）
- *   2 gamepad_settings（4 字节）：deadzone_left / deadzone_right（u16 LE，0~2047 ADC count）
+ *   2 gamepad_settings（6 字节）：deadzone_left / deadzone_right（u16 LE，0~2047 ADC count）
+ *                                + invert_mask（u8，bit0~3 = LX/LY/RX/RY）+ _reserved（u8，恒 0）
  *   3 polling_rate（1 字节）：level
  * - 修改后点击 [保存] 写入固件（CONFIG_SET + CONFIG_SAVE）
  */
@@ -28,6 +29,14 @@ const POLL_RATE_NAMES = ['250 Hz', '500 Hz', '1000 Hz', '2000 Hz', '4000 Hz', '8
 const DEADZONE_MAX = 2047;
 // 出厂默认死区（与固件 Config/config.c 的 gamepadSettingsDefault 一致）
 const DEADZONE_DEFAULT = 40;
+
+// 四轴反转位掩码（与固件 Config/config.h 的 JOYSTICK_INVERT_* 严格一致）
+//   bit0=LX bit1=LY bit2=RX bit3=RY，对应轴编号枚举 0~3
+const INVERT_LX = 1 << 0; // 0x01
+const INVERT_LY = 1 << 1; // 0x02
+const INVERT_RX = 1 << 2; // 0x04
+const INVERT_RY = 1 << 3; // 0x08
+const INVERT_MASK_ALL = 0x0f;
 
 //--------------------------------------------------------------------+
 // 固件响应中的状态码位置（按命令码索引）
@@ -59,6 +68,7 @@ const model = {
     },
     deadzoneLeft: DEADZONE_DEFAULT,    // 左摇杆死区（0~2047 ADC count，LX/LY 共用）
     deadzoneRight: DEADZONE_DEFAULT,   // 右摇杆死区（0~2047 ADC count，RX/RY 共用）
+    invertMask: 0,                     // 轴向反转位掩码（bit0=LX bit1=LY bit2=RX bit3=RY）
     pollRate: 2,
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
@@ -164,15 +174,18 @@ function parseCalib(data) {
 }
 
 function parseGamepadSettings(data) {
-    // 固件 GamepadSettings = { u16 deadzone_left; u16 deadzone_right; }（4 字节小端）
-    if (!data || data.length < 4) {
-        console.warn(`gamepad_settings 负载长度异常（${data ? data.length : 0} 字节，期望 4），回落到默认 ${DEADZONE_DEFAULT}`);
+    // 固件 GamepadSettings = { u16 deadzone_left; u16 deadzone_right;
+    //                          u8 invert_mask; u8 _reserved; }（6 字节小端）
+    if (!data || data.length < 6) {
+        console.warn(`gamepad_settings 负载长度异常（${data ? data.length : 0} 字节，期望 6），回落到默认 ${DEADZONE_DEFAULT}/${DEADZONE_DEFAULT}/0`);
         model.deadzoneLeft = DEADZONE_DEFAULT;
         model.deadzoneRight = DEADZONE_DEFAULT;
+        model.invertMask = 0;
         return;
     }
     model.deadzoneLeft = u16(data, 0);
     model.deadzoneRight = u16(data, 2);
+    model.invertMask = data[4] & INVERT_MASK_ALL;   // 第 6 字节 _reserved 不参与 UI
 }
 
 function parsePollingRate(data) {
@@ -191,11 +204,13 @@ function buildCalibBytes() {
     return out;
 }
 
-// 组 2 负载：{ deadzone_left: u16 LE, deadzone_right: u16 LE } = 4 字节
+// 组 2 负载：{ deadzone_left: u16 LE, deadzone_right: u16 LE, invert_mask: u8, _reserved: u8 } = 6 字节
+//   末尾的 _reserved 必须显式补 0：固件 validate_gamepad_settings() 会拒绝第 6 字节非零的载荷。
 function buildGamepadSettingsBytes() {
     const l = model.deadzoneLeft & 0xffff;
     const r = model.deadzoneRight & 0xffff;
-    return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff];
+    const inv = model.invertMask & INVERT_MASK_ALL;
+    return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff, inv, 0];
 }
 
 //--------------------------------------------------------------------+
@@ -228,7 +243,7 @@ async function saveAll() {
     }
     if (dirty.has(GROUP_GAMEPAD_SETTINGS)) {
         const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_GAMEPAD_SETTINGS, ...buildGamepadSettingsBytes()]);
-        if (!ok) throw new Error('写入死区失败');
+        if (!ok) throw new Error('写入摇杆设置失败');
     }
     if (dirty.has(GROUP_POLLING_RATE)) {
         const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_POLLING_RATE, model.pollRate]);
