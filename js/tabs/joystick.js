@@ -2,7 +2,7 @@
  * joystick.js - 摇杆 Tab
  *
  * 二级 Tab：左摇杆 / 右摇杆
- * - 死区：百分比滑块（0-50%），左右摇杆共用同一字段（联动）
+ * - 死区：12-bit ADC 计数死区（0~2047），左右独立（左页签写 deadzone_left，右页签写 deadzone_right）
  * - 中心校准：手动输入 min/center/max + 四步校准向导
  * - 校准向导：CALIB_START → CALIB_SAMPLE(回中采样) → CALIB_TRACK(转满圈) → CALIB_END(保存)
  * - 实时显示：轮询 JOYSTICK_RAW 显示 4 轴逻辑原始值 / 映射值
@@ -14,6 +14,21 @@ import { msp, MSP_CMD } from '../msp.js';
 // 摇杆配置组 ID（与固件 config.h 一致）
 const GROUP_JOYSTICK_CALIB = 1;
 const GROUP_GAMEPAD_SETTINGS = 2;
+
+// 死区上限/默认值：12-bit ADC 半量程计数
+//   与固件 Config/config.h 的 CONFIG_DEADZONE_MAX、Config/config.c 的
+//   gamepadSettingsDefault 严格对齐。
+const DEADZONE_MAX = 2047;
+const DEADZONE_DEFAULT = 40;
+
+// 校准命令中状态码所在的下标：固件失败帧同样用 '>' 方向字节，
+// 只能靠 payload 里的状态码区分（CALIB_SAMPLE 成功才回数据，无状态码）。
+const CALIB_STATUS_INDEX = {
+    [MSP_CMD.CALIB_START]: 0,
+    [MSP_CMD.CALIB_TRACK]: 0,
+    [MSP_CMD.CALIB_END]: 0,
+    [MSP_CMD.CALIB_CANCEL]: 0,
+};
 
 // 轴顺序（与固件 joystick.c 一致：LX/LY/RX/RY）
 const AXES = [
@@ -36,6 +51,12 @@ async function calibRequest(cmd, data = []) {
     const resp = await msp.request(serial, cmd, data, 2000);
     if (resp === null) throw new Error(`MSP 超时 cmd=0x${cmd.toString(16).padStart(2, '0')}`);
     if (resp.isError) throw new Error(`MSP 错误 cmd=0x${cmd.toString(16).padStart(2, '0')} status=${resp.payload[0]}`);
+    // 固件失败帧同样走 '>'，必须再看 payload 里的状态码，否则
+    // "越阶调用被拒绝"会被当成校准步骤成功。
+    const statusIdx = CALIB_STATUS_INDEX[cmd];
+    if (statusIdx !== undefined && resp.payload[statusIdx] !== 0) {
+        throw new Error(`固件拒绝 cmd=0x${cmd.toString(16).padStart(2, '0')} status=${resp.payload[statusIdx]}`);
+    }
     return resp;
 }
 
@@ -89,16 +110,19 @@ export function renderJoystickTab(container, model, ctx) {
     container.appendChild(renderLiveSection());
 
     //--------------------------------------------------------------------+
-    // 单个摇杆面板：死区（百分比）+ 手动校准值
+    // 单个摇杆面板：死区（12-bit ADC count，左右独立）+ 手动校准值
     //--------------------------------------------------------------------+
     function renderPanel(parent, stick) {
         parent.innerHTML = '';
         const xAxis = stick === 'left' ? 'lx' : 'rx';
         const yAxis = stick === 'left' ? 'ly' : 'ry';
+        const isLeft = (stick === 'left');
 
-        const sectionDeadzone = section('死区');
-        sectionDeadzone.appendChild(deadzoneRow('X 轴'));
-        sectionDeadzone.appendChild(deadzoneRow('Y 轴'));
+        // 固件侧 LX/LY 共用 deadzone_left、RX/RY 共用 deadzone_right，故每侧只渲染一行
+        const sectionDeadzone = section('死区（12-bit ADC count）');
+        sectionDeadzone.appendChild(isLeft
+            ? deadzoneRow('deadzoneLeft', '左摇杆死区（LX / LY 共用）')
+            : deadzoneRow('deadzoneRight', '右摇杆死区（RX / RY 共用）'));
         parent.appendChild(sectionDeadzone);
 
         const sectionCalib = section('中心校准（手动）');
@@ -116,13 +140,16 @@ export function renderJoystickTab(container, model, ctx) {
         parent.appendChild(hint);
     }
 
-    // 死区百分比滑块行（X/Y 联动同一 model.deadzone）
-    function deadzoneRow(label) {
+    // 死区行：12-bit ADC 计数（0~2047，步进 1），滑块与数字输入框双向同步
+    //   field = 'deadzoneLeft' | 'deadzoneRight'，直接读写 config.js 的 model
+    function deadzoneRow(field, labelText) {
+        if (!Number.isFinite(model[field])) model[field] = DEADZONE_DEFAULT;
+
         const row = document.createElement('div');
         row.className = 'config-row';
         const labelEl = document.createElement('span');
         labelEl.className = 'config-label';
-        labelEl.textContent = label;
+        labelEl.textContent = labelText;
         row.appendChild(labelEl);
 
         const input = document.createElement('div');
@@ -131,29 +158,43 @@ export function renderJoystickTab(container, model, ctx) {
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.min = '0';
-        slider.max = '50';                      // 百分比 0-50%
-        slider.value = model.deadzone;
+        slider.max = String(DEADZONE_MAX);
+        slider.step = '1';
+        slider.value = String(model[field]);
 
-        const valueEl = document.createElement('span');
-        valueEl.className = 'config-value';
-        valueEl.textContent = model.deadzone;
-        valueEl.dataset.role = 'deadzone';
+        const stepper = document.createElement('div');
+        stepper.className = 'number-stepper';
+        const num = document.createElement('input');
+        num.type = 'number';
+        num.min = '0';
+        num.max = String(DEADZONE_MAX);
+        num.step = '1';
+        num.value = String(model[field]);
+        stepper.appendChild(num);
 
         const rangeEl = document.createElement('span');
         rangeEl.className = 'config-range';
-        rangeEl.textContent = '百分比 0-50';
+        rangeEl.textContent = `ADC count 0-${DEADZONE_MAX}`;
 
-        slider.addEventListener('input', () => {
-            const v = parseInt(slider.value, 10);
-            model.deadzone = v;
-            valueEl.textContent = v;
-            panel.querySelectorAll('input[type="range"]').forEach(s => { s.value = v; });
-            panel.querySelectorAll('.config-value[data-role="deadzone"]').forEach(el => { el.textContent = v; });
+        // 边界钳位：手动输入越界会被固件判 INVALID_DATA，这里先在 UI 侧收口
+        const clamp = (v) => Math.min(DEADZONE_MAX, Math.max(0, v));
+        const apply = (v) => {
+            const raw = Number.isFinite(v) ? v : model[field];
+            model[field] = clamp(Math.round(raw));
+            slider.value = String(model[field]);
+            num.value = String(model[field]);
             ctx.markDirty(GROUP_GAMEPAD_SETTINGS);
+        };
+
+        slider.addEventListener('input', () => apply(parseInt(slider.value, 10)));
+        num.addEventListener('change', () => {
+            if (num.value === '') { num.value = String(model[field]); return; }
+            const v = parseInt(num.value, 10);
+            apply(Number.isNaN(v) ? model[field] : v);
         });
 
         input.appendChild(slider);
-        input.appendChild(valueEl);
+        input.appendChild(stepper);
         input.appendChild(rangeEl);
         row.appendChild(input);
         return row;

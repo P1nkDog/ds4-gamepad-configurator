@@ -5,7 +5,7 @@
  * - 连接后自动读取设备信息（API/变体/固件版本）与所有配置组
  * - 配置组：
  *   1 joystick_calib（24 字节）：LX/LY/RX/RY 各 {min, center, max}（u16 LE）
- *   2 gamepad_settings（2 字节）：deadzone（u16 LE）
+ *   2 gamepad_settings（4 字节）：deadzone_left / deadzone_right（u16 LE，0~2047 ADC count）
  *   3 polling_rate（1 字节）：level
  * - 修改后点击 [保存] 写入固件（CONFIG_SET + CONFIG_SAVE）
  */
@@ -24,6 +24,31 @@ const MSP_REBOOT_MAGIC = 0x52; // 'R'（与固件 msp_protocol.h 一致）
 
 const POLL_RATE_NAMES = ['250 Hz', '500 Hz', '1000 Hz', '2000 Hz', '4000 Hz', '8000 Hz'];
 
+// 死区上限：12-bit ADC 半量程计数（与固件 Config/config.h 的 CONFIG_DEADZONE_MAX 一致）
+const DEADZONE_MAX = 2047;
+// 出厂默认死区（与固件 Config/config.c 的 gamepadSettingsDefault 一致）
+const DEADZONE_DEFAULT = 40;
+
+//--------------------------------------------------------------------+
+// 固件响应中的状态码位置（按命令码索引）
+//   固件从不发 '$ M !'：失败帧与成功帧共用 '>' 方向字节，状态码塞在 payload 里
+//   （Driver/msp/msp_handler.c 的 msp_send_error() 直接复用 msp_send_reply()）。
+//     [status]             → 下标 0
+//     [config_id, status]  → 下标 1（CONFIG_SET / CONFIG_RESET）
+//   未列出的命令（CONFIG_GET / CONFIG_STATUS / JOYSTICK_RAW / API_VERSION 等）
+//   payload 是纯数据，不做状态码判断。
+//--------------------------------------------------------------------+
+const MSP_STATUS_INDEX = {
+    [MSP_CMD.REBOOT]: 0,
+    [MSP_CMD.CONFIG_SET]: 1,
+    [MSP_CMD.CONFIG_SAVE]: 0,
+    [MSP_CMD.CONFIG_RESET]: 1,
+    [MSP_CMD.CALIB_START]: 0,
+    [MSP_CMD.CALIB_TRACK]: 0,
+    [MSP_CMD.CALIB_END]: 0,
+    [MSP_CMD.CALIB_CANCEL]: 0,
+};
+
 // 配置模型（默认值来自固件 config.c；连接后会被固件实际值覆盖）
 const model = {
     calib: {
@@ -32,7 +57,8 @@ const model = {
         rx: { min: 0, center: 2048, max: 4095 },
         ry: { min: 0, center: 2048, max: 4095 },
     },
-    deadzone: 3,   // 死区百分比（0-50），默认 3%
+    deadzoneLeft: DEADZONE_DEFAULT,    // 左摇杆死区（0~2047 ADC count，LX/LY 共用）
+    deadzoneRight: DEADZONE_DEFAULT,   // 右摇杆死区（0~2047 ADC count，RX/RY 共用）
     pollRate: 2,
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
@@ -59,6 +85,19 @@ async function mspRequest(cmd, data = [], timeoutMs = 2000) {
         console.error(`MSP 错误: cmd=0x${resp.cmd.toString(16).padStart(2, '0')} status=${statusName}`);
         return null;
     }
+
+    // 固件错误帧与成功帧共用 '>' 方向字节，失败与否只能看 payload 里的状态码。
+    // 不判这一层，固件拒绝写入（INVALID_ID / INVALID_DATA / FLASH_ERROR）会被当成成功。
+    const statusIndex = MSP_STATUS_INDEX[cmd];
+    if (statusIndex !== undefined) {
+        const status = resp.payload[statusIndex];
+        if (status !== 0) {
+            const statusName = MSP_STATUS_NAME[status] || 'UNKNOWN';
+            console.error(`MSP 拒绝: cmd=0x${cmd.toString(16).padStart(2, '0')} status=${statusName}(${status})`);
+            return null;
+        }
+    }
+
     return resp;
 }
 
@@ -125,7 +164,15 @@ function parseCalib(data) {
 }
 
 function parseGamepadSettings(data) {
-    if (data.length >= 2) model.deadzone = u16(data, 0);
+    // 固件 GamepadSettings = { u16 deadzone_left; u16 deadzone_right; }（4 字节小端）
+    if (!data || data.length < 4) {
+        console.warn(`gamepad_settings 负载长度异常（${data ? data.length : 0} 字节，期望 4），回落到默认 ${DEADZONE_DEFAULT}`);
+        model.deadzoneLeft = DEADZONE_DEFAULT;
+        model.deadzoneRight = DEADZONE_DEFAULT;
+        return;
+    }
+    model.deadzoneLeft = u16(data, 0);
+    model.deadzoneRight = u16(data, 2);
 }
 
 function parsePollingRate(data) {
@@ -142,6 +189,13 @@ function buildCalibBytes() {
         out.push(c.max & 0xff, (c.max >> 8) & 0xff);
     }
     return out;
+}
+
+// 组 2 负载：{ deadzone_left: u16 LE, deadzone_right: u16 LE } = 4 字节
+function buildGamepadSettingsBytes() {
+    const l = model.deadzoneLeft & 0xffff;
+    const r = model.deadzoneRight & 0xffff;
+    return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff];
 }
 
 //--------------------------------------------------------------------+
@@ -173,7 +227,7 @@ async function saveAll() {
         if (!ok) throw new Error('写入摇杆校准失败');
     }
     if (dirty.has(GROUP_GAMEPAD_SETTINGS)) {
-        const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_GAMEPAD_SETTINGS, model.deadzone & 0xff, (model.deadzone >> 8) & 0xff]);
+        const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_GAMEPAD_SETTINGS, ...buildGamepadSettingsBytes()]);
         if (!ok) throw new Error('写入死区失败');
     }
     if (dirty.has(GROUP_POLLING_RATE)) {
