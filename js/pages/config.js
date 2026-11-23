@@ -8,6 +8,7 @@
  *   2 gamepad_settings（6 字节）：deadzone_left / deadzone_right（u16 LE，0~2047 ADC count）
  *                                + invert_mask（u8，bit0~3 = LX/LY/RX/RY）+ debounce_ms（u8，0~50ms）
  *   3 polling_rate（1 字节）：level
+ *   4 button_map（26 字节）：map[0..25]，每字节为 Ds4LogicalButton（0=禁用，1~18=功能）
  * - 修改后点击 [保存] 写入固件（CONFIG_SET + CONFIG_SAVE）
  */
 
@@ -18,8 +19,10 @@ import { showMessage, showConfirm } from '../components/dialog.js';
 import { renderButtonsTab } from '../tabs/buttons.js';
 import { renderJoystickTab, GROUP_JOYSTICK_CALIB, GROUP_GAMEPAD_SETTINGS } from '../tabs/joystick.js';
 import { renderTriggerTab } from '../tabs/trigger.js';
+import { DEFAULT_BUTTON_MAP, DS4_BTN_MAX } from '../tabs/button_map.js';
 
 const GROUP_POLLING_RATE = 3;
+const GROUP_BUTTON_MAP = 4;
 const APP_VERSION = 'v0.1.0';
 const MSP_REBOOT_MAGIC = 0x52; // 'R'（与固件 msp_protocol.h 一致）
 
@@ -75,6 +78,7 @@ const model = {
     deadzoneRight: DEADZONE_DEFAULT,   // 右摇杆死区（0~2047 ADC count，RX/RY 共用）
     invertMask: 0,                     // 轴向反转位掩码（bit0=LX bit1=LY bit2=RX bit3=RY）
     debounceMs: DEBOUNCE_DEFAULT_MS,   // 按键消抖时间（0~50ms，0 = 关闭消抖直通）
+    buttonMap: [...DEFAULT_BUTTON_MAP], // 26 路物理键 → DS4 逻辑功能（下标即物理位号）
     pollRate: 2,
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
@@ -157,6 +161,7 @@ async function readAllConfigs() {
             if (g.id === GROUP_JOYSTICK_CALIB) parseCalib(data);
             else if (g.id === GROUP_GAMEPAD_SETTINGS) parseGamepadSettings(data);
             else if (g.id === GROUP_POLLING_RATE) parsePollingRate(data);
+            else if (g.id === GROUP_BUTTON_MAP) parseButtonMap(data);
         }
     }
 
@@ -200,6 +205,21 @@ function parsePollingRate(data) {
     if (data.length >= 1) model.pollRate = data[0];
 }
 
+// 组 4：26 路物理键 → DS4 逻辑功能，逐字节；非法值（> DS4_BTN_MAX）回落到默认表
+function parseButtonMap(data) {
+    if (!data || data.length < 26) {
+        console.warn(`button_map 负载长度异常（${data ? data.length : 0} 字节，期望 26），回落到出厂默认映射`);
+        model.buttonMap = [...DEFAULT_BUTTON_MAP];
+        return;
+    }
+    const map = new Array(26);
+    for (let i = 0; i < 26; i++) {
+        const v = data[i];
+        map[i] = (v > DS4_BTN_MAX) ? DEFAULT_BUTTON_MAP[i] : v;
+    }
+    model.buttonMap = map;
+}
+
 function buildCalibBytes() {
     const out = [];
     const axes = ['lx', 'ly', 'rx', 'ry'];
@@ -221,6 +241,14 @@ function buildGamepadSettingsBytes() {
     const inv = model.invertMask & INVERT_MASK_ALL;
     const deb = Math.min(DEBOUNCE_MAX_MS, Math.max(0, Math.round(Number(model.debounceMs) || 0))) & 0xff;
     return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff, inv, deb];
+}
+
+// 组 4 负载：map[0..25]，每项钳位为 0 ~ DS4_BTN_MAX 的整数（越界会被固件拒收）
+function buildButtonMapBytes() {
+    return model.buttonMap.map((v) => {
+        const n = Math.round(Number(v) || 0);
+        return Math.min(DS4_BTN_MAX, Math.max(0, n)) & 0xff;
+    });
 }
 
 //--------------------------------------------------------------------+
@@ -258,6 +286,10 @@ async function saveAll() {
     if (dirty.has(GROUP_POLLING_RATE)) {
         const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_POLLING_RATE, model.pollRate]);
         if (!ok) throw new Error('写入回报率失败');
+    }
+    if (dirty.has(GROUP_BUTTON_MAP)) {
+        const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_BUTTON_MAP, ...buildButtonMapBytes()]);
+        if (!ok) throw new Error('写入按键映射失败');
     }
 
     const okSave = await mspRequest(MSP_CMD.CONFIG_SAVE);

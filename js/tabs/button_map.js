@@ -1,63 +1,85 @@
 /**
- * button_map.js - 固件固定按键映射表（只读）
+ * button_map.js - 26 路物理按键定义 + DS4 逻辑功能枚举 + 出厂默认映射
  *
- * 来源：映射取自固件 Driver/gamepad/gamepad.c 的 gamepad_process()，
- *      引脚取自 Driver/input/input.c 的 input_read_buttons() 与 input.h 的掩码注释。
+ * 与固件严格对齐：
+ *   物理位序 —— Driver/input/input.h 的 INPUT_MASK_*（bit0 ~ bit25）
+ *   逻辑功能 —— Config/config.h 的 Ds4LogicalButton（0 ~ 18）
+ *   默认映射 —— Config/config.c 的 buttonMapDefault（逐项一致）
  *
- * 动作键（对应固件 West/South/East/North 布局）：
- *   X = PB11 → DS4 □
- *   A = PE13 → DS4 ×
- *   B = PE14 → DS4 ○
- *   Y = PE15 → DS4 △
- *
- * 其余引脚：
- *   十字键  UP=PE9  RIGHT=PE8  DOWN=PE11  LEFT=PE10
- *   肩键/扳机 L1=PE7  R1=PB10  L2=PB0  R2=PB1
- *   摇杆按下  L3=PA5（左摇杆）  R3=PE1（右摇杆）
- *   功能键  Select=PB12(SW2)  Start=PB14(SW4)  PS=PE12  Touchpad=PB13(SW3)
- *
- * 拓展按键 BTN1~BTN8（PD3/PD4/PD5/PD6/PD7/PB3/PB4/PE0）固件只做扫描，
- * 未映射到任何 DS4 输出，因此 target 为 null。
+ * 注意位序陷阱：物理位 bit4~7 是 X/A/B/Y，而 DS4 逻辑枚举 5~8 是 A/B/Y/X，
+ * 两者**不是同序**，默认表已逐项对齐（bit4=X→8、bit5=A→5、bit6=B→6、bit7=Y→7）。
  */
 
+// DS4 逻辑功能上限（与固件 DS4_BTN_MAX 一致）
+export const DS4_BTN_MAX = 18;
+
+// 物理按键表：数组下标 == 固件物理位号（0 ~ 25）
+//   name 给用户看的物理按键名，pin 为 v0.2.0 实测引脚（见固件 README.zh-CN.md）
 export const PHYSICAL_BUTTONS = [
-    // 动作键（对应固件 West/South/East/North）
-    { name: 'X',   target: 'DS4 □ (Square)' },
-    { name: 'A',   target: 'DS4 × (Cross)' },
-    { name: 'B',   target: 'DS4 ○ (Circle)' },
-    { name: 'Y',   target: 'DS4 △ (Triangle)' },
-
-    // 肩键
-    { name: 'L1',  target: 'DS4 L1' },
-    { name: 'R1',  target: 'DS4 R1' },
-
-    // 扳机
-    { name: 'L2',  target: 'DS4 L2' },
-    { name: 'R2',  target: 'DS4 R2' },
-
-    // 摇杆按下
-    { name: 'L3',  target: 'DS4 L3' },
-    { name: 'R3',  target: 'DS4 R3' },
-
-    // 功能键
-    { name: 'Start',    target: 'DS4 Options' },
-    { name: 'Select',   target: 'DS4 Share' },
-    { name: 'PS',       target: 'DS4 PS' },
-    { name: 'Touchpad', target: 'DS4 Touchpad' },
-
-    // 十字键
-    { name: '十字键上', target: '十字键上' },
-    { name: '十字键下', target: '十字键下' },
-    { name: '十字键左', target: '十字键左' },
-    { name: '十字键右', target: '十字键右' },
-
-    // 拓展按键（固件已扫描，未映射到 DS4）
-    { name: '拓展1', target: null },
-    { name: '拓展2', target: null },
-    { name: '拓展3', target: null },
-    { name: '拓展4', target: null },
-    { name: '拓展5', target: null },
-    { name: '拓展6', target: null },
-    { name: '拓展7', target: null },
-    { name: '拓展8', target: null },
+    { bit: 0,  name: '十字键上 (UP)',      pin: 'PE9'  },
+    { bit: 1,  name: '十字键右 (RIGHT)',   pin: 'PE8'  },
+    { bit: 2,  name: '十字键下 (DOWN)',    pin: 'PE11' },
+    { bit: 3,  name: '十字键左 (LEFT)',    pin: 'PE10' },
+    { bit: 4,  name: 'X / □ (Square)',     pin: 'PB11' },
+    { bit: 5,  name: 'A / × (Cross)',      pin: 'PE13' },
+    { bit: 6,  name: 'B / ○ (Circle)',     pin: 'PE14' },
+    { bit: 7,  name: 'Y / △ (Triangle)',   pin: 'PE15' },
+    { bit: 8,  name: 'L1',                 pin: 'PE7'  },
+    { bit: 9,  name: 'R1',                 pin: 'PB10' },
+    { bit: 10, name: 'L2',                 pin: 'PB0'  },
+    { bit: 11, name: 'R2',                 pin: 'PB1'  },
+    { bit: 12, name: 'L3（左摇杆按下）',    pin: 'PA7'  },
+    { bit: 13, name: 'R3（右摇杆按下）',    pin: 'PE1'  },
+    { bit: 14, name: 'PS',                 pin: 'PE12' },
+    { bit: 15, name: 'Share (SELECT)',     pin: 'PB12' },
+    { bit: 16, name: 'Options (START)',    pin: 'PB14' },
+    { bit: 17, name: 'Touchpad（按下）',    pin: 'PB13' },
+    { bit: 18, name: '扩展键 BTN1',         pin: 'PD1'  },
+    { bit: 19, name: '扩展键 BTN2',         pin: 'PD2'  },
+    { bit: 20, name: '扩展键 BTN3',         pin: 'PD3'  },
+    { bit: 21, name: '扩展键 BTN4',         pin: 'PD4'  },
+    { bit: 22, name: '扩展键 BTN5',         pin: 'PD5'  },
+    { bit: 23, name: '扩展键 BTN6',         pin: 'PD6'  },
+    { bit: 24, name: '扩展键 BTN7',         pin: 'PD7'  },
+    { bit: 25, name: '扩展键 BTN8',         pin: 'PB3'  },
 ];
+
+// DS4 逻辑功能选项（value 与固件 Ds4LogicalButton 枚举严格一致）
+export const DS4_LOGICAL_BUTTONS = [
+    { value: 0,  label: '无（禁用）' },
+    { value: 1,  label: '方向上 (UP)' },
+    { value: 2,  label: '方向右 (RIGHT)' },
+    { value: 3,  label: '方向下 (DOWN)' },
+    { value: 4,  label: '方向左 (LEFT)' },
+    { value: 5,  label: '× Cross (A)' },
+    { value: 6,  label: '○ Circle (B)' },
+    { value: 7,  label: '△ Triangle (Y)' },
+    { value: 8,  label: '□ Square (X)' },
+    { value: 9,  label: 'L1' },
+    { value: 10, label: 'R1' },
+    { value: 11, label: 'L2' },
+    { value: 12, label: 'R2' },
+    { value: 13, label: 'L3 (左摇杆按下)' },
+    { value: 14, label: 'R3 (右摇杆按下)' },
+    { value: 15, label: 'PS 键' },
+    { value: 16, label: 'Share (SELECT)' },
+    { value: 17, label: 'Options (START)' },
+    { value: 18, label: 'Touchpad (触摸板按下)' },
+];
+
+// 出厂默认映射（与固件 buttonMapDefault 逐字节一致）
+//   0~17：标准键按原硬编码映射；18~25：BTN1~BTN8 默认禁用
+export const DEFAULT_BUTTON_MAP = [
+    1, 2, 3, 4, 8, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    0, 0, 0, 0, 0, 0, 0, 0,
+];
+
+/**
+ * 取逻辑功能的中文标签（越界或未定义时返回占位文本）
+ * @param {number} value - 0 ~ 18
+ * @returns {string}
+ */
+export function logicalButtonLabel(value) {
+    const item = DS4_LOGICAL_BUTTONS.find((b) => b.value === value);
+    return item ? item.label : '未知';
+}
