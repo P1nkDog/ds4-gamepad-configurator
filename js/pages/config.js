@@ -8,7 +8,7 @@
  *   2 gamepad_settings（6 字节）：deadzone_left / deadzone_right（u16 LE，0~2047 ADC count）
  *                                + invert_mask（u8，bit0~3 = LX/LY/RX/RY）+ debounce_ms（u8，0~50ms）
  *   3 polling_rate（1 字节）：level
- *   4 button_map（26 字节）：map[0..25]，每字节为 Ds4LogicalButton（0=禁用，1~18=功能）
+ *   4 button_map（104 字节）：uint32_t mask[26] 小端，每项为逻辑功能位掩码（bit1~18，0=禁用）
  * - 修改后点击 [保存] 写入固件（CONFIG_SET + CONFIG_SAVE）
  */
 
@@ -19,10 +19,12 @@ import { showMessage, showConfirm } from '../components/dialog.js';
 import { renderButtonsTab } from '../tabs/buttons.js';
 import { renderJoystickTab, GROUP_JOYSTICK_CALIB, GROUP_GAMEPAD_SETTINGS } from '../tabs/joystick.js';
 import { renderTriggerTab } from '../tabs/trigger.js';
-import { DEFAULT_BUTTON_MAP, DS4_BTN_MAX } from '../tabs/button_map.js';
+import { DEFAULT_BUTTON_MASKS, DS4_LOGICAL_MASK_ALL } from '../tabs/button_map.js';
 
 const GROUP_POLLING_RATE = 3;
 const GROUP_BUTTON_MAP = 4;
+// 组 4 负载长度：26 个 uint32 小端 = 104 字节
+const BUTTON_MAP_BYTES = 26 * 4;
 const APP_VERSION = 'v0.1.0';
 const MSP_REBOOT_MAGIC = 0x52; // 'R'（与固件 msp_protocol.h 一致）
 
@@ -78,7 +80,7 @@ const model = {
     deadzoneRight: DEADZONE_DEFAULT,   // 右摇杆死区（0~2047 ADC count，RX/RY 共用）
     invertMask: 0,                     // 轴向反转位掩码（bit0=LX bit1=LY bit2=RX bit3=RY）
     debounceMs: DEBOUNCE_DEFAULT_MS,   // 按键消抖时间（0~50ms，0 = 关闭消抖直通）
-    buttonMap: [...DEFAULT_BUTTON_MAP], // 26 路物理键 → DS4 逻辑功能（下标即物理位号）
+    buttonMap: [...DEFAULT_BUTTON_MASKS], // 26 路物理键 → DS4 逻辑功能位掩码（下标即物理位号）
     pollRate: 2,
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
@@ -205,17 +207,22 @@ function parsePollingRate(data) {
     if (data.length >= 1) model.pollRate = data[0];
 }
 
-// 组 4：26 路物理键 → DS4 逻辑功能，逐字节；非法值（> DS4_BTN_MAX）回落到默认表
+// 组 4：26 × uint32 小端位掩码；长度不足或单项含非法位时回落到默认/过滤非法位
 function parseButtonMap(data) {
-    if (!data || data.length < 26) {
-        console.warn(`button_map 负载长度异常（${data ? data.length : 0} 字节，期望 26），回落到出厂默认映射`);
-        model.buttonMap = [...DEFAULT_BUTTON_MAP];
+    if (!data || data.length < BUTTON_MAP_BYTES) {
+        console.warn(`button_map 负载长度异常（${data ? data.length : 0} 字节，期望 ${BUTTON_MAP_BYTES}），回落到出厂默认映射`);
+        model.buttonMap = [...DEFAULT_BUTTON_MASKS];
         return;
     }
     const map = new Array(26);
     for (let i = 0; i < 26; i++) {
-        const v = data[i];
-        map[i] = (v > DS4_BTN_MAX) ? DEFAULT_BUTTON_MAP[i] : v;
+        const off = i * 4;
+        // 小端拼 32 位，>>> 0 保证无符号（否则 bit31 会变成负数）
+        const raw = ((data[off]
+            | (data[off + 1] << 8)
+            | (data[off + 2] << 16)
+            | (data[off + 3] << 24)) >>> 0);
+        map[i] = (raw & DS4_LOGICAL_MASK_ALL) >>> 0;
     }
     model.buttonMap = map;
 }
@@ -243,12 +250,18 @@ function buildGamepadSettingsBytes() {
     return [l & 0xff, (l >> 8) & 0xff, r & 0xff, (r >> 8) & 0xff, inv, deb];
 }
 
-// 组 4 负载：map[0..25]，每项钳位为 0 ~ DS4_BTN_MAX 的整数（越界会被固件拒收）
+// 组 4 负载：26 × uint32 小端 = 104 字节；每项先掩掉非法位再拆字节
 function buildButtonMapBytes() {
-    return model.buttonMap.map((v) => {
-        const n = Math.round(Number(v) || 0);
-        return Math.min(DS4_BTN_MAX, Math.max(0, n)) & 0xff;
-    });
+    const out = new Array(BUTTON_MAP_BYTES);
+    for (let i = 0; i < 26; i++) {
+        const m = (Number(model.buttonMap[i]) & DS4_LOGICAL_MASK_ALL) >>> 0;
+        const off = i * 4;
+        out[off]     = m & 0xff;
+        out[off + 1] = (m >>> 8) & 0xff;
+        out[off + 2] = (m >>> 16) & 0xff;
+        out[off + 3] = (m >>> 24) & 0xff;
+    }
+    return out;
 }
 
 //--------------------------------------------------------------------+

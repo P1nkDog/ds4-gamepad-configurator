@@ -1,17 +1,28 @@
 /**
- * button_map.js - 26 路物理按键定义 + DS4 逻辑功能枚举 + 出厂默认映射
+ * button_map.js - 26 路物理按键定义 + DS4 逻辑功能位掩码 + 出厂默认掩码表
  *
  * 与固件严格对齐：
  *   物理位序 —— Driver/input/input.h 的 INPUT_MASK_*（bit0 ~ bit25）
- *   逻辑功能 —— Config/config.h 的 Ds4LogicalButton（0 ~ 18）
- *   默认映射 —— Config/config.c 的 buttonMapDefault（逐项一致）
+ *   逻辑功能 —— Config/config.h 的 Ds4LogicalButton（bit1 ~ bit18 为合法功能位）
+ *   默认掩码 —— Config/config.c 的 buttonMapDefault（26 × uint32，逐项一致）
  *
- * 注意位序陷阱：物理位 bit4~7 是 X/A/B/Y，而 DS4 逻辑枚举 5~8 是 A/B/Y/X，
+ * 注意位序陷阱：物理位 bit4~7 是 X/A/B/Y，而 DS4 逻辑位 5~8 是 A/B/Y/X，
  * 两者**不是同序**，默认表已逐项对齐（bit4=X→8、bit5=A→5、bit6=B→6、bit7=Y→7）。
+ *
+ * 一个物理键的映射是**位掩码**：0 = 禁用，单个位 = 单功能，多个位 = 同时触发多个功能。
  */
 
 // DS4 逻辑功能上限（与固件 DS4_BTN_MAX 一致）
 export const DS4_BTN_MAX = 18;
+// 合法位掩码：bit1 ~ bit18（bit0 是 DS4_BTN_NONE 的编号，不是功能位）
+export const DS4_LOGICAL_MASK_ALL = 0x0007FFFE;
+
+/**
+ * 构造单个逻辑功能的位掩码（>>> 0 保证是 32 位无符号数）
+ * @param {number} btn - 1 ~ 18
+ * @returns {number}
+ */
+export const ds4BtnBit = (btn) => (1 << btn) >>> 0;
 
 // 物理按键表：数组下标 == 固件物理位号（0 ~ 25）
 //   name 给用户看的物理按键名，pin 为 v0.2.0 实测引脚（见固件 README.zh-CN.md）
@@ -44,42 +55,49 @@ export const PHYSICAL_BUTTONS = [
     { bit: 25, name: '扩展键 BTN8',         pin: 'PB3'  },
 ];
 
-// DS4 逻辑功能选项（value 与固件 Ds4LogicalButton 枚举严格一致）
+// 18 个可触发的 DS4 逻辑功能（bit 1 ~ 18，不含 0=禁用）
+//   short 用于组合摘要（如 "L1 + R1"），label 用于悬停提示
 export const DS4_LOGICAL_BUTTONS = [
-    { value: 0,  label: '无（禁用）' },
-    { value: 1,  label: '方向上 (UP)' },
-    { value: 2,  label: '方向右 (RIGHT)' },
-    { value: 3,  label: '方向下 (DOWN)' },
-    { value: 4,  label: '方向左 (LEFT)' },
-    { value: 5,  label: '× Cross (A)' },
-    { value: 6,  label: '○ Circle (B)' },
-    { value: 7,  label: '△ Triangle (Y)' },
-    { value: 8,  label: '□ Square (X)' },
-    { value: 9,  label: 'L1' },
-    { value: 10, label: 'R1' },
-    { value: 11, label: 'L2' },
-    { value: 12, label: 'R2' },
-    { value: 13, label: 'L3 (左摇杆按下)' },
-    { value: 14, label: 'R3 (右摇杆按下)' },
-    { value: 15, label: 'PS 键' },
-    { value: 16, label: 'Share (SELECT)' },
-    { value: 17, label: 'Options (START)' },
-    { value: 18, label: 'Touchpad (触摸板按下)' },
+    { bit: 1,  short: '↑',        label: '方向上 (UP)' },
+    { bit: 2,  short: '→',        label: '方向右 (RIGHT)' },
+    { bit: 3,  short: '↓',        label: '方向下 (DOWN)' },
+    { bit: 4,  short: '←',        label: '方向左 (LEFT)' },
+    { bit: 5,  short: '× (A)',    label: '× Cross (A)' },
+    { bit: 6,  short: '○ (B)',    label: '○ Circle (B)' },
+    { bit: 7,  short: '△ (Y)',    label: '△ Triangle (Y)' },
+    { bit: 8,  short: '□ (X)',    label: '□ Square (X)' },
+    { bit: 9,  short: 'L1',       label: 'L1' },
+    { bit: 10, short: 'R1',       label: 'R1' },
+    { bit: 11, short: 'L2',       label: 'L2' },
+    { bit: 12, short: 'R2',       label: 'R2' },
+    { bit: 13, short: 'L3',       label: 'L3 (左摇杆按下)' },
+    { bit: 14, short: 'R3',       label: 'R3 (右摇杆按下)' },
+    { bit: 15, short: 'PS',       label: 'PS 键' },
+    { bit: 16, short: 'Share',    label: 'Share (SELECT)' },
+    { bit: 17, short: 'Options',  label: 'Options (START)' },
+    { bit: 18, short: 'Touchpad', label: 'Touchpad (触摸板按下)' },
 ];
 
-// 出厂默认映射（与固件 buttonMapDefault 逐字节一致）
-//   0~17：标准键按原硬编码映射；18~25：BTN1~BTN8 默认禁用
-export const DEFAULT_BUTTON_MAP = [
+// 出厂默认位掩码表（26 个 uint32，与固件 buttonMapDefault 逐项一致）
+//   0~17：标准键单功能；18~25：BTN1~BTN8 禁用（0）
+export const DEFAULT_BUTTON_MASKS = [
     1, 2, 3, 4, 8, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
     0, 0, 0, 0, 0, 0, 0, 0,
-];
+].map((btn) => (btn > 0 ? ds4BtnBit(btn) : 0));
 
 /**
- * 取逻辑功能的中文标签（越界或未定义时返回占位文本）
- * @param {number} value - 0 ~ 18
- * @returns {string}
+ * 把位掩码格式化成可读摘要
+ *   ！按 DS4_LOGICAL_BUTTONS 的固定顺序输出，与固件报告顺序无关但稳定可比。
+ * @param {number} mask - 32 位无符号掩码
+ * @returns {string} 例如 '无（禁用）' / 'L1' / 'L1 + R1' / '× (A) + □ (X)'
  */
-export function logicalButtonLabel(value) {
-    const item = DS4_LOGICAL_BUTTONS.find((b) => b.value === value);
-    return item ? item.label : '未知';
+export function formatButtonMask(mask) {
+    const m = (Number(mask) & DS4_LOGICAL_MASK_ALL) >>> 0;
+    if (m === 0) return '无（禁用）';
+
+    const parts = [];
+    for (const item of DS4_LOGICAL_BUTTONS) {
+        if ((m & ds4BtnBit(item.bit)) !== 0) parts.push(item.short);
+    }
+    return parts.length ? parts.join(' + ') : '无（禁用）';
 }
