@@ -9,6 +9,7 @@
  *                                + invert_mask（u8，bit0~3 = LX/LY/RX/RY）+ debounce_ms（u8，0~50ms）
  *   3 polling_rate（1 字节）：level
  *   4 button_map（104 字节）：uint32_t mask[26] 小端，每项为逻辑功能位掩码（bit1~18，0=禁用）
+ *   5~12 macro_slot[0~7]（每个 236 字节）：MacroSlotConfig（见 §3.2 注释）
  * - 修改后点击 [保存] 写入固件（CONFIG_SET + CONFIG_SAVE）
  */
 
@@ -20,6 +21,24 @@ import { renderButtonsTab } from '../tabs/buttons.js';
 import { renderJoystickTab, GROUP_JOYSTICK_CALIB, GROUP_GAMEPAD_SETTINGS } from '../tabs/joystick.js';
 import { renderTriggerTab } from '../tabs/trigger.js';
 import { DEFAULT_BUTTON_MASKS, DS4_LOGICAL_MASK_ALL } from '../tabs/button_map.js';
+import {
+    renderMacroTab,
+    stopMacroRecording,
+    createDefaultMacroSlots,
+    MACRO_SLOT_COUNT,
+    MACRO_GROUP_BASE,
+    MACRO_SLOT_BYTES,
+    MACRO_STEP_BYTES,
+    MACRO_MAX_STEPS,
+    MACRO_TRIGGER_MASK_ALL,
+    MACRO_FLAG_BLOCK_TRIGGER,
+    MACRO_HOLD_MS_MAX,
+    MACRO_AXIS_MIN,
+    MACRO_AXIS_MAX,
+    MACRO_STEP_MS_MIN,
+    MACRO_STEP_MS_MAX,
+    MACRO_MODE_MAX,
+} from '../tabs/macro.js';
 
 const GROUP_POLLING_RATE = 3;
 const GROUP_BUTTON_MAP = 4;
@@ -81,6 +100,8 @@ const model = {
     invertMask: 0,                     // 轴向反转位掩码（bit0=LX bit1=LY bit2=RX bit3=RY）
     debounceMs: DEBOUNCE_DEFAULT_MS,   // 按键消抖时间（0~50ms，0 = 关闭消抖直通）
     buttonMap: [...DEFAULT_BUTTON_MASKS], // 26 路物理键 → DS4 逻辑功能位掩码（下标即物理位号）
+    // 8 个宏槽位（配置组 5~12），每槽 236 字节 / 最多 16 步
+    macros: createDefaultMacroSlots(),
     pollRate: 2,
     port: '未连接',
     device: { variant: '-', api: '-', fw: '-' },
@@ -164,6 +185,7 @@ async function readAllConfigs() {
             else if (g.id === GROUP_GAMEPAD_SETTINGS) parseGamepadSettings(data);
             else if (g.id === GROUP_POLLING_RATE) parsePollingRate(data);
             else if (g.id === GROUP_BUTTON_MAP) parseButtonMap(data);
+            else if (g.id >= MACRO_GROUP_BASE && g.id < MACRO_GROUP_BASE + MACRO_SLOT_COUNT) parseMacroSlot(data, g.id - MACRO_GROUP_BASE);
         }
     }
 
@@ -225,6 +247,119 @@ function parseButtonMap(data) {
         map[i] = (raw & DS4_LOGICAL_MASK_ALL) >>> 0;
     }
     model.buttonMap = map;
+}
+
+//--------------------------------------------------------------------+
+// 宏槽位编解码（组 5~12，每槽 236 字节）
+//   布局（全部小端，**不是** 16 字节对齐，MacroStep 是 packed 14 字节）：
+//     0  u32 trigger_mask   26 路物理键位掩码（bit0~25，0 = 未绑定）
+//     4  u16 hold_ms        0 ~ 10000（0 = 按下立即触发）
+//     6  u8  mode           0=ONCE 1=HOLD 2=TOGGLE
+//     7  u8  flags          bit0 = BLOCK_TRIGGER，其余位必须 0
+//     8  u8  step_count     0 ~ 16
+//     9  u8  reserved[3]    必须全 0
+//     12 + i*14  步 i（i = 0..15）：
+//        +0 u32 mask（DS4 逻辑位 bit1~18，0 = 纯延时/仅摇杆）
+//        +4 i16 lx / +6 i16 ly / +8 i16 rx / +10 i16 ry（相对中点 -2048 ~ +2047）
+//        +12 u16 duration_ms（1 ~ 65535）
+//   未启用步（i >= step_count）必须全 0，否则固件 macro_slot_validate() 回 INVALID_DATA。
+//--------------------------------------------------------------------+
+function parseMacroSlot(data, slotIdx) {
+    if (slotIdx < 0 || slotIdx >= MACRO_SLOT_COUNT) return;
+
+    if (!data || data.length < MACRO_SLOT_BYTES) {
+        console.warn(`macro_slot[${slotIdx}] 负载长度异常（${data ? data.length : 0} 字节，期望 ${MACRO_SLOT_BYTES}），回落到默认空槽位`);
+        model.macros[slotIdx] = createDefaultMacroSlots()[slotIdx];
+        return;
+    }
+
+    // 先拷进独立 ArrayBuffer 再按小端 DataView 读，避免依赖传入数组的对齐/长度
+    const bytes = new Uint8Array(MACRO_SLOT_BYTES);
+    for (let i = 0; i < MACRO_SLOT_BYTES; i++) bytes[i] = data[i] & 0xff;
+    const dv = new DataView(bytes.buffer);
+
+    const mode = dv.getUint8(6);
+    const slot = {
+        triggerMask: (dv.getUint32(0, true) & MACRO_TRIGGER_MASK_ALL) >>> 0,
+        holdMs: Math.min(MACRO_HOLD_MS_MAX, dv.getUint16(4, true)),
+        mode: mode <= MACRO_MODE_MAX ? mode : 0,
+        flags: dv.getUint8(7) & MACRO_FLAG_BLOCK_TRIGGER,
+        stepCount: Math.min(MACRO_MAX_STEPS, dv.getUint8(8)),
+        steps: [],
+    };
+
+    for (let i = 0; i < MACRO_MAX_STEPS; i++) {
+        const off = 12 + i * MACRO_STEP_BYTES;
+        const used = i < slot.stepCount;
+        if (!used) {
+            // 未启用步统一回落默认值（编码时必然写 0，不影响往返一致性）
+            slot.steps.push({ mask: 0, lx: 0, ly: 0, rx: 0, ry: 0, durationMs: 100 });
+            continue;
+        }
+        slot.steps.push({
+            mask: (dv.getUint32(off, true) & DS4_LOGICAL_MASK_ALL) >>> 0,
+            lx: clampAxisOffset(dv.getInt16(off + 4, true)),
+            ly: clampAxisOffset(dv.getInt16(off + 6, true)),
+            rx: clampAxisOffset(dv.getInt16(off + 8, true)),
+            ry: clampAxisOffset(dv.getInt16(off + 10, true)),
+            durationMs: Math.min(MACRO_STEP_MS_MAX, Math.max(MACRO_STEP_MS_MIN, dv.getUint16(off + 12, true))),
+        });
+    }
+
+    model.macros[slotIdx] = slot;
+}
+
+/**
+ * 把槽位模型编码成 236 字节（CONFIG_SET 载荷除 id 外的部分）
+ * @param {Object} slot
+ * @returns {number[]} 长度恒为 236
+ */
+function buildMacroSlotBytes(slot) {
+    const buf = new ArrayBuffer(MACRO_SLOT_BYTES);
+    const dv = new DataView(buf); // ArrayBuffer 初值全 0：reserved 与未用步天然为 0
+
+    if (slot) {
+        const count = Math.min(MACRO_MAX_STEPS, Math.max(0, Math.round(Number(slot.stepCount) || 0)));
+        const hold = Math.min(MACRO_HOLD_MS_MAX, Math.max(0, Math.round(Number(slot.holdMs) || 0)));
+        const modeRaw = Math.round(Number(slot.mode) || 0);
+        const mode = (modeRaw >= 0 && modeRaw <= MACRO_MODE_MAX) ? modeRaw : 0;
+        const flags = (Number(slot.flags) || 0) & MACRO_FLAG_BLOCK_TRIGGER;
+
+        dv.setUint32(0, (Number(slot.triggerMask) || 0) & MACRO_TRIGGER_MASK_ALL, true);
+        dv.setUint16(4, hold, true);
+        dv.setUint8(6, mode);
+        dv.setUint8(7, flags);
+        dv.setUint8(8, count);
+        dv.setUint8(9, 0);
+        dv.setUint8(10, 0);
+        dv.setUint8(11, 0);
+
+        const steps = Array.isArray(slot.steps) ? slot.steps : [];
+        for (let i = 0; i < count; i++) {
+            const step = steps[i] || {};
+            const off = 12 + i * MACRO_STEP_BYTES;
+            dv.setUint32(off, (Number(step.mask) || 0) & DS4_LOGICAL_MASK_ALL, true);
+            dv.setInt16(off + 4, clampAxisOffset(step.lx), true);
+            dv.setInt16(off + 6, clampAxisOffset(step.ly), true);
+            dv.setInt16(off + 8, clampAxisOffset(step.rx), true);
+            dv.setInt16(off + 10, clampAxisOffset(step.ry), true);
+            dv.setUint16(off + 12, clampDuration(step.durationMs), true);
+        }
+    }
+
+    return Array.from(new Uint8Array(buf));
+}
+
+/** 摇杆偏移：int16 符号无损，钳位到 [-2048, 2047] */
+function clampAxisOffset(value) {
+    const n = Math.round(Number(value) || 0);
+    return Math.min(MACRO_AXIS_MAX, Math.max(MACRO_AXIS_MIN, n));
+}
+
+/** 步时长：有效步严禁 0，钳位到 [1, 65535] */
+function clampDuration(value) {
+    const n = Math.round(Number(value) || 0);
+    return Math.min(MACRO_STEP_MS_MAX, Math.max(MACRO_STEP_MS_MIN, n));
 }
 
 function buildCalibBytes() {
@@ -303,6 +438,15 @@ async function saveAll() {
     if (dirty.has(GROUP_BUTTON_MAP)) {
         const ok = await mspRequest(MSP_CMD.CONFIG_SET, [GROUP_BUTTON_MAP, ...buildButtonMapBytes()]);
         if (!ok) throw new Error('写入按键映射失败');
+    }
+
+    // 宏槽位（组 5~12）：只写有修改的槽位，每帧载荷 1 + 236 = 237 字节。
+    // 宏保存后立即生效（播放引擎每帧读 RAM 里的槽位），不必提示重启。
+    for (let slot = 0; slot < MACRO_SLOT_COUNT; slot++) {
+        const groupId = MACRO_GROUP_BASE + slot;
+        if (!dirty.has(groupId)) continue;
+        const ok = await mspRequest(MSP_CMD.CONFIG_SET, [groupId, ...buildMacroSlotBytes(model.macros[slot])]);
+        if (!ok) throw new Error(`写入宏 ${slot + 1} 失败`);
     }
 
     const okSave = await mspRequest(MSP_CMD.CONFIG_SAVE);
@@ -387,6 +531,7 @@ async function handleConnect() {
 }
 
 async function handleDisconnect() {
+    stopMacroRecording();
     connected = false;
     try { await serial.close(); } catch (e) {}
     rerenderIfActive();
@@ -402,6 +547,9 @@ function rerenderIfActive() {
 // 渲染
 //--------------------------------------------------------------------+
 export function renderConfigPage(container) {
+    // 页面重绘前先停掉宏录制轮询，避免旧 DOM 被替换后仍在后台发 0x1B
+    stopMacroRecording();
+
     containerRef = container;
     container.innerHTML = '';
     saveBtnRef = null;
@@ -417,6 +565,7 @@ export function renderConfigPage(container) {
             { key: 'buttons', label: '按键' },
             { key: 'joystick', label: '摇杆' },
             { key: 'trigger', label: '扳机' },
+            { key: 'macro', label: '宏' },
             { key: 'board', label: '主板' },
         ]
         : [];
@@ -452,6 +601,9 @@ export function renderConfigPage(container) {
 }
 
 function renderContent(contentEl) {
+    // 任何一次内容重绘都会销毁宏页签的 DOM，先把 0x1B 轮询停掉
+    stopMacroRecording();
+
     if (!connected) {
         contentEl.innerHTML = `
             <div class="guide-card">
@@ -481,6 +633,9 @@ function renderContent(contentEl) {
         }
         case 'trigger':
             renderTriggerTab(contentEl);
+            break;
+        case 'macro':
+            renderMacroTab(contentEl, model, { markDirty });
             break;
         case 'board':
             renderBoardTab(contentEl);
@@ -686,6 +841,7 @@ function infoRow(label, value) {
 // 外部：断开连接（供 app.js 在切换页面时调用）
 //--------------------------------------------------------------------+
 export async function disconnectConfig() {
+    stopMacroRecording();
     if (connected) {
         connected = false;
         try { await serial.close(); } catch (e) {}
