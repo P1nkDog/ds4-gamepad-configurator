@@ -6,7 +6,10 @@
  * - 轴向反转：X/Y 轴独立 checkbox，写 model.invertMask 的 bit0~3（后置反转，切换无需重校准）
  * - 中心校准：手动输入 min/center/max + 四步校准向导
  * - 校准向导：CALIB_START → CALIB_SAMPLE(回中采样) → CALIB_TRACK(转满圈) → CALIB_END(保存)
- * - 实时显示：轮询 JOYSTICK_RAW 显示 4 轴逻辑原始值 / 映射值
+ * - 实时显示：单飞轮询 JOYSTICK_RAW 显示 4 轴逻辑原始值 / 映射值
+ *   注意：进度条绑定的是「原始 ADC」而非映射输出——校准跟踪期间固件刻意把
+ *   映射输出钉在中点 2048（min/max 未标定完，映射无意义），若进度条取映射值
+ *   就会永远停在 50%。
  */
 
 import { serial } from '../serial.js';
@@ -50,9 +53,31 @@ const INVERT_MASK_ALL = 0x0f;
 
 // 校准向导步骤（客户端状态）：0=空闲 1=已开始 2=已采样中心 3=跟踪中
 let wizardStep = 0;
-// 实时轮询
+
+// 实时轮询（单飞自调度：上一帧响应回来后才排下一帧，避免 100ms 定时器
+// 在 USB 变慢时叠加出多个并发请求，把 CDC 队列塞满后表现为"数值不刷新"）
 let liveTimer = null;
-let livePollFn = null;
+let livePollFn = null;      // 单帧刷新函数，成功返回 true
+let liveCardEl = null;      // 实时卡片 DOM，用于检测页签是否已被切走
+let liveArmed = false;      // 卡片曾挂载过（避免首帧挂载前被误判为已切走）
+let liveRunning = false;
+
+// 实时刷新节奏：JOYSTICK_RAW 一帧仅 17 字节，100ms 足够顺滑
+const LIVE_INTERVAL_MS = 100;
+// 单帧失败（超时 / 串口已断开）后的退避，避免立即失败导致满速空转
+const LIVE_FAIL_BACKOFF_MS = 300;
+
+// 12-bit ADC 全量程
+const ADC_MAX = 4095;
+
+// ADC 值钳位（越界值一律收口到 0~4095，避免进度条宽度溢出）
+const clampAdc = (v) => {
+    const n = Number(v);
+    return Math.min(ADC_MAX, Math.max(0, Number.isFinite(n) ? n : 0));
+};
+
+// ADC 值 → 进度条宽度百分比（保留 2 位小数，避免 1% 台阶造成视觉跳动）
+const adcPercent = (v) => (clampAdc(v) / ADC_MAX * 100).toFixed(2) + '%';
 
 //--------------------------------------------------------------------+
 // MSP 请求封装（带错误处理）
@@ -396,7 +421,8 @@ function renderWizardSection(model, ctx) {
             });
             ctx.markDirty(GROUP_JOYSTICK_CALIB);
             wizardStep = 0;
-            stopLive();
+            // 不停实时刷新：固件已退出跟踪态，映射输出恢复正常，
+            // 面板继续刷新才能让用户立刻看到校准后的效果
             setStatus('完成，已保存到 Flash。');
             refreshButtons();
         } catch (e) { setStatus('失败：' + e.message); }
@@ -405,7 +431,6 @@ function renderWizardSection(model, ctx) {
     mkBtn('cancel', '取消校准', async () => {
         try { await calibRequest(MSP_CMD.CALIB_CANCEL); } catch (e) {}
         wizardStep = 0;
-        stopLive();
         setStatus('已取消。');
         refreshButtons();
     });
@@ -449,7 +474,15 @@ function readCalibAll(payload) {
 function renderLiveSection() {
     const card = document.createElement('div');
     card.className = 'section-card';
-    card.innerHTML = '<h3>实时显示（跟踪时自动刷新）</h3>';
+    card.innerHTML = '<h3>实时显示（自动刷新）</h3>';
+
+    // 语义说明：左右两列各自代表什么，以及"跟踪期间为什么右侧恒为 2048"
+    const caption = document.createElement('p');
+    caption.className = 'placeholder-text';
+    caption.style.margin = '0 0 8px';
+    caption.textContent = '左：原始 ADC（0 ~ 4095，进度条跟随此值）　右：映射输出'
+        + '（跟踪 / 已采样中心期间固件固定输出中点 2048，属正常现象）。';
+    card.appendChild(caption);
 
     const rowsEl = document.createElement('div');
     card.appendChild(rowsEl);
@@ -476,33 +509,68 @@ function renderLiveSection() {
         };
     });
 
-    // 轮询 JOYSTICK_RAW
+    // 单帧刷新 JOYSTICK_RAW
+    //   进度条必须绑 raw：固件 joystick_process() 在 CALIB_TRACKING /
+    //   CALIB_CENTER_SAMPLED 状态下刻意把映射输出钉在 JOYSTICK_OUTPUT_MID
+    //   （=2048，因为此时 min/max 尚未标定完，映射无意义），所以 out 在
+    //   整个跟踪过程中恒为 2048 —— 之前进度条取 out，就必然永远停在 50%。
+    //   原始 ADC 不受该状态机影响，才是"摇杆转到哪"的真实来源。
     async function poll() {
-        try {
-            const resp = await calibRequest(MSP_CMD.JOYSTICK_RAW);
-            const { raw, out } = parseRawResp(resp.payload);
-            for (let i = 0; i < 4; i++) {
-                rowEls[i].raw.textContent = String(raw[i]);
-                rowEls[i].out.textContent = String(out[i]);
-                const pct = Math.round(out[i] / 4095 * 100);
-                rowEls[i].bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
-            }
-        } catch (e) { /* 超时/断开时静默 */ }
+        const resp = await calibRequest(MSP_CMD.JOYSTICK_RAW);
+        const { raw, out } = parseRawResp(resp.payload);
+        const pinned = (wizardStep >= 2);
+        for (let i = 0; i < 4; i++) {
+            const rawV = clampAdc(raw[i]);
+            rowEls[i].raw.textContent = String(rawV);
+            rowEls[i].bar.style.width = adcPercent(rawV);
+            rowEls[i].out.textContent = String(clampAdc(out[i]));
+            // 钉死期把映射值压暗，避免用户误以为它也是实时值
+            rowEls[i].out.style.opacity = pinned ? '0.55' : '1';
+            rowEls[i].out.title = pinned
+                ? '跟踪 / 已采样中心期间固件固定输出中点 2048，映射在校准完成后恢复'
+                : '';
+        }
+        return true;
     }
 
+    liveCardEl = card;
     livePollFn = poll;
+    // 页签渲染即开刷：未点 [③ 开始跟踪] 时也能看到四轴真实位置
+    startLive();
     return card;
 }
 
+// 排程下一帧（单飞：同一时刻最多一个在途请求）
+function scheduleNextFrame(delay) {
+    if (liveTimer) clearTimeout(liveTimer);
+    liveTimer = setTimeout(liveFrame, delay);
+}
+
+async function liveFrame() {
+    liveTimer = null;
+    if (!liveRunning) return;
+
+    // 页签被切走（DOM 脱离文档）后自行停表，避免对已销毁的节点继续写 DOM
+    if (liveCardEl && liveCardEl.isConnected) liveArmed = true;
+    else if (liveArmed) { stopLive(); return; }
+
+    let ok = false;
+    try { ok = await (livePollFn ? livePollFn() : false); } catch (e) { ok = false; }
+    if (!liveRunning) return;
+    scheduleNextFrame(ok ? LIVE_INTERVAL_MS : LIVE_FAIL_BACKOFF_MS);
+}
+
 function startLive() {
-    if (liveTimer) clearInterval(liveTimer);
-    liveTimer = setInterval(() => {
-        if (livePollFn) livePollFn();
-    }, 100);
+    if (liveRunning) return;
+    liveRunning = true;
+    liveArmed = false;      // 新卡片：等它挂载进文档后再启用地脱离检测
+    scheduleNextFrame(LIVE_INTERVAL_MS);
 }
 
 function stopLive() {
-    if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+    liveRunning = false;
+    liveArmed = false;
+    if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
 }
 
 export { GROUP_JOYSTICK_CALIB, GROUP_GAMEPAD_SETTINGS };
