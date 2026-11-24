@@ -42,6 +42,20 @@ const PICKER_GROUPS = [
     { title: '摇杆与系统键', bits: [13, 14, 15, 16, 17, 18] },
 ];
 
+/**
+ * 26 路物理键的极简显示名（下标即物理位号）。
+ * 表里只放最短的辨识符号，完整名称（如「X / □ (Square)」）留在单元格 title 里，
+ * 避免中文长名把双列布局撑开。
+ */
+const PHYS_SHORT_NAMES = [
+    '十字键上', '十字键右', '十字键下', '十字键左',
+    '□', '×', '○', '△',
+    'L1', 'R1', 'L2', 'R2',
+    'L3', 'R3',
+    'PS', 'Share', 'Options', 'Touchpad',
+    'BTN1', 'BTN2', 'BTN3', 'BTN4', 'BTN5', 'BTN6', 'BTN7', 'BTN8',
+];
+
 // 遮罩与弹窗卡片样式统一交给全局 CSS 的 .combo-picker-overlay / .combo-picker-card
 // （磨砂遮罩、圆角、微阴影随主题走；层级 z-index:900 高于 .dialog-overlay(100) 与 .boot-error(300)）
 
@@ -58,7 +72,7 @@ export function renderButtonsTab(container, model, ctx) {
     const banner = document.createElement('div');
     banner.className = 'notice-banner';
     banner.innerHTML = '支持 <b>26 路物理按键</b>（含 BTN1 ~ BTN8 扩展键）动态重映射：'
-        + '点击表格里的<b>映射框</b>弹出多选面板，可勾选 <b>1 个或多个</b> DS4 逻辑功能——'
+        + '点击表格右侧的<b>映射图标</b>弹出多选面板，可勾选 <b>1 个或多个</b> DS4 逻辑功能——'
         + '勾多个即"按一下同时触发多个键"（组合键），全部取消即为<b>禁用</b>。'
         + '修改后请点击底边栏 <b>[保存]</b> 写入固件。'
         + '注意：上电按住 <b>Share</b> 进入配置模式走的是物理电平，<b>不受映射影响</b>。';
@@ -73,8 +87,33 @@ export function renderButtonsTab(container, model, ctx) {
 
 //--------------------------------------------------------------------+
 // 26 键组合键映射卡片（组 4 button_map，104 字节位掩码）
-//   每行单行展示：物理键名 + 「当前映射」按钮（点击弹窗编辑）；界面不再平铺 18 枚芯片。
+//   每行两列：左=50px 物理键图标 + 精简键名，右=直接展示 50px 映射图标（点击弹窗编辑）
 //--------------------------------------------------------------------+
+/**
+ * 渲染一行「映射功能」的 50px 图标组。
+ * 掩码为 0（禁用）时改渲染一枚禁用药囊占位，点击同样能把面板打开。
+ * @param {HTMLElement} el - .ds-btn-tags 容器
+ * @param {number} mask - DS4 逻辑位掩码
+ */
+function renderMapIcons(el, mask) {
+    el.textContent = '';
+    const m = Number(mask) >>> 0;
+
+    let count = 0;
+    for (const fb of DS4_LOGICAL_BUTTONS) {
+        if (!((m >>> fb.bit) & 1)) continue;
+        el.appendChild(iconTag(logicalIconKey(fb.bit), fb.short, { size: 50 }));
+        count++;
+    }
+
+    if (count === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'ds-btn-empty';
+        empty.textContent = '无（禁用）';
+        el.appendChild(empty);
+    }
+}
+
 function renderMappingCard(model, ctx) {
     // 初始化容错：字段缺失/长度不对时回落到出厂映射
     if (!Array.isArray(model.buttonMap) || model.buttonMap.length !== PHYSICAL_BUTTONS.length) {
@@ -105,20 +144,19 @@ function renderMappingCard(model, ctx) {
 
     const hint = document.createElement('p');
     hint.className = 'placeholder-text';
-    hint.textContent = '点击映射框可弹出多选面板，支持单键触发单个或多个 DS4 按键同时按下（组合键），'
-        + '全部取消即为「无（禁用）」。边框高亮表示该行已被自定义（与出厂默认不同）。'
+    hint.textContent = '点击右侧映射图标弹出多选面板，支持单键触发单个或多个 DS4 按键同时按下（组合键），'
+        + '全部取消即为「无（禁用）」。图标旁的粉色圆点表示该行已被自定义（与出厂默认不同）。'
         + '修改后请点击底边栏 [保存] 写入固件（写的是组 4 的 104 字节位掩码）。';
     card.appendChild(hint);
 
     const table = document.createElement('table');
-    table.className = 'mapping-table';
+    table.className = 'ds-map-table';
 
     const thead = document.createElement('thead');
     thead.innerHTML = `
         <tr>
             <th>物理按键 / 引脚</th>
-            <th>映射功能（点击编辑）</th>
-            <th>出厂默认</th>
+            <th>映射功能</th>
         </tr>
     `;
     table.appendChild(thead);
@@ -129,76 +167,74 @@ function renderMappingCard(model, ctx) {
     PHYSICAL_BUTTONS.forEach((item, index) => {
         const tr = document.createElement('tr');
 
-        // ---- 第 1 列：图标 + 名称 + bit/引脚（摘要移到第 2 列，这里不再重复） ----
-        const tdName = document.createElement('td');
-        const nameBox = document.createElement('span');
-        nameBox.className = 'ds-row-name';
+        // ---- 第 1 列：50px 图标 + 精简键名 + bit/引脚（完整原名走 title） ----
+        const tdPhys = document.createElement('td');
+        tdPhys.className = 'ds-phys-td';
 
-        const rowIcon = iconImg(physicalIconKey(item.bit), { size: 22 });
-        if (rowIcon) {
-            rowIcon.classList.add('ds-row-icon');
-            rowIcon.title = item.name;
-            nameBox.appendChild(rowIcon);
+        const physBox = document.createElement('div');
+        physBox.className = 'ds-phys-cell';
+        physBox.title = item.name;      // 悬浮查看完整说明（如「十字键上 (UP)」）
+
+        const cellIcon = iconImg(physicalIconKey(item.bit), { size: 50 });
+        if (cellIcon) {
+            cellIcon.classList.add('ds-phys-icon');
+            physBox.appendChild(cellIcon);
         }
 
         const textBox = document.createElement('span');
-        textBox.className = 'ds-row-text';
+        // BTN1~BTN8 没有图标素材：不插等宽占位（会把纯文字块顶偏），
+        // 改用 is-no-icon 让名称与位号整体居中
+        textBox.className = cellIcon ? 'ds-phys-text' : 'ds-phys-text is-no-icon';
 
         const nameEl = document.createElement('span');
-        nameEl.className = 'ds-row-title';
-        nameEl.textContent = item.name;
+        nameEl.className = 'ds-phys-name';
+        nameEl.textContent = PHYS_SHORT_NAMES[item.bit] || item.name;
 
         const pinEl = document.createElement('span');
-        pinEl.className = 'ds-row-meta';
+        pinEl.className = 'ds-phys-meta';
         pinEl.textContent = `bit${item.bit} · ${item.pin}`;
 
         textBox.appendChild(nameEl);
         textBox.appendChild(pinEl);
-        nameBox.appendChild(textBox);
-        tdName.appendChild(nameBox);
-        tr.appendChild(tdName);
+        physBox.appendChild(textBox);
+        tdPhys.appendChild(physBox);
+        tr.appendChild(tdPhys);
 
-        // ---- 第 2 列：单行紧凑触发按钮（左：当前映射图标组，右：▾ 指示符） ----
-        const tdTrigger = document.createElement('td');
+        // ---- 第 2 列：无边框的映射图标组 + 自定义指示点 ----
+        const tdMap = document.createElement('td');
+        tdMap.className = 'ds-map-td';
+
         const trigger = document.createElement('button');
         trigger.type = 'button';
         trigger.className = 'ds-map-trigger';
         trigger.dataset.index = String(index);
+        trigger.setAttribute('aria-label', `编辑映射：${item.name}`);
 
         const triggerLabel = document.createElement('span');
         triggerLabel.className = 'ds-btn-tags';
 
-        const triggerArrow = document.createElement('span');
-        triggerArrow.className = 'ds-map-arrow';
-        triggerArrow.textContent = '▾';
+        const customDot = document.createElement('span');
+        customDot.className = 'ds-custom-dot';
+        customDot.title = '已自定义（与出厂默认不同）';
 
         trigger.appendChild(triggerLabel);
-        trigger.appendChild(triggerArrow);
+        trigger.appendChild(customDot);
         trigger.addEventListener('click', () => openComboPickerModal(index, model, markDirty, refresh));
-        tdTrigger.appendChild(trigger);
-        tr.appendChild(tdTrigger);
+        tdMap.appendChild(trigger);
+        tr.appendChild(tdMap);
 
-        // ---- 第 3 列：出厂默认摘要 ----
-        const tdDefault = document.createElement('td');
-        tdDefault.textContent = formatButtonMask(DEFAULT_BUTTON_MASKS[index]);
-        tdDefault.style.cssText = 'font-size:13px;color:var(--text-secondary);white-space:nowrap;';
-        tr.appendChild(tdDefault);
-
-        // 刷新本行触发按钮：图标组 / 禁用配色 / 自定义边框高亮
+        // 刷新本行：50px 映射图标组 / 禁用占位 / 自定义圆点
         function refresh() {
             const m = (Number(model.buttonMap[index]) & DS4_LOGICAL_MASK_ALL) >>> 0;
             const def = (Number(DEFAULT_BUTTON_MASKS[index]) & DS4_LOGICAL_MASK_ALL) >>> 0;
-            const disabled = (m === 0);
             const custom = (m !== def);
 
-            fillMaskTags(triggerLabel, 'logical', m, '无（禁用）', (bit) => {
-                const fb = DS4_LOGICAL_BUTTONS.find((x) => x.bit === bit);
-                return fb ? fb.short : `bit${bit}`;
-            });
+            renderMapIcons(triggerLabel, m);
+
             trigger.dataset.mask = String(m);
             trigger.title = `点击编辑：${formatButtonMask(m)}`;
             trigger.classList.toggle('is-custom', custom);
-            trigger.classList.toggle('is-disabled', disabled);
+            trigger.classList.toggle('is-disabled', m === 0);
         }
         refresh();
         refreshers.push(refresh);

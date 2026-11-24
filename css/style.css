@@ -1065,10 +1065,11 @@ body {
 }
 
 /* ============================================================
-   配置表格（按键 Tab）
+   26 路按键映射表（双列极简：左=物理键 50px 图标 + 短名，右=映射 50px 图标）
    ============================================================ */
-.mapping-table {
+.ds-map-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   background: var(--bg-card);
@@ -1077,148 +1078,175 @@ body {
   overflow: hidden;
 }
 
-.mapping-table th,
-.mapping-table td {
-  padding: 9px 14px;
-  text-align: left;
+/* 两列等宽 50% / 50%，表头与单元格全部水平居中 */
+.ds-map-table th {
+  width: 50%;
+  padding: 14px 16px;
+  text-align: center;
+  background: var(--fill-subtle);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.ds-map-table td {
+  padding: 13px 16px;
+  text-align: center;
+  vertical-align: middle;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
-  vertical-align: middle;
 }
 
-.mapping-table th {
-  background: var(--fill-subtle);
-  color: var(--text-secondary);
-  font-weight: 500;
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  text-transform: none;
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.mapping-table tr:last-child td {
-  border-bottom: none;
-}
-
-.mapping-table tbody tr {
-  transition: background 0.15s ease;
-}
-
-.mapping-table tbody tr:nth-child(even) {
-  background: rgba(0, 0, 0, 0.012);
-}
-
-[data-theme="dark"] .mapping-table tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.018);
-}
-
-.mapping-table tbody tr:hover {
-  background: var(--fill-hover);
-}
-
-.mapping-table .map-target {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.mapping-table .map-none {
-  color: var(--text-secondary);
-}
-
-.mapping-table .btn-macro {
-  padding: 4px 12px;
-  font-size: 12px;
-  background: var(--fill-subtle);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  border-radius: var(--r-pill);
-  cursor: default;
-  font-family: inherit;
-}
-
-/* 表格行：图标 + 名称 + 位号 */
-.ds-row-name {
-  display: flex;
-  align-items: center;
-  gap: 11px;
+.ds-map-table .ds-map-td {
   white-space: nowrap;
 }
 
-.ds-row-icon {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+.ds-map-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ds-map-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.ds-map-table tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.012);
+}
+
+[data-theme="dark"] .ds-map-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.ds-map-table tbody tr:hover {
+  background: var(--fill-hover);
+}
+
+/* ---- 第 1 列：50px 图标 + 短名 + bit/引脚 ---- */
+.ds-phys-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 0 auto;
+}
+
+.ds-phys-icon {
+  flex: none;
+  width: 50px;
+  height: 50px;
   object-fit: contain;
 }
 
-.ds-row-text {
+.ds-phys-text {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 0;
+  gap: 2px;
+  min-width: 76px;
+  text-align: left;
 }
 
-.ds-row-title {
-  font-size: 13px;
+/* 无图标素材的扩展键（BTN1~BTN8）：去掉固定宽度，整块纯文字居中 */
+.ds-phys-text.is-no-icon {
+  min-width: 0;
+  text-align: center;
+}
+
+.ds-phys-name {
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
-  line-height: 1.35;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
-.ds-row-meta {
+.ds-phys-meta {
   font-size: 11px;
   color: var(--text-tertiary);
   letter-spacing: 0.02em;
-  line-height: 1.35;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
-/* 表格行内的映射触发按钮 */
+/* ---- 第 2 列：无边框的 50px 映射图标触发器 ---- */
 .ds-map-trigger {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 10px;
-  width: 100%;
-  max-width: 340px;
-  padding: 6px 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-  background: var(--input-bg);
+  width: auto;
+  max-width: none;
+  min-height: 50px;
+  padding: 0;
+  margin: 0 auto;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
   color: var(--text-primary);
   font-family: inherit;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  transition: transform 0.16s ease, box-shadow 0.18s ease;
 }
 
-.ds-map-trigger:hover {
-  border-color: var(--border-strong);
-  background: var(--fill-subtle);
+.ds-map-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
-.ds-map-trigger.is-custom {
-  border-color: var(--accent-soft-hover);
-  background: var(--accent-soft);
+/* 组合键：多枚 50px 图标横向紧凑排列，超宽自动换行 */
+.ds-map-trigger .ds-btn-tags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  overflow: visible;
 }
 
-.ds-map-trigger.is-custom:hover {
-  border-color: var(--accent);
+/* 悬停：图标轻微放大 + 顺势柔和微光（不产生任何矩形边框） */
+.ds-map-trigger:hover .ds-btn-icon {
+  transform: scale(1.06);
+  filter: drop-shadow(0 2px 7px rgba(255, 107, 157, 0.42));
 }
 
-.ds-map-trigger.is-disabled .ds-btn-tag-text {
+.ds-map-trigger.is-disabled {
   color: var(--text-secondary);
 }
 
-.ds-map-arrow {
-  flex: 0 0 auto;
-  font-size: 10px;
+/* 自定义指示点：仅 is-custom 行显示 */
+/* 绝对定位于图标组右侧：不参与 flex 布局，否则会把图标组整体推离列中心 */
+.ds-custom-dot {
+  position: absolute;
+  top: 50%;
+  right: -16px;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #ff6b9d);
+  flex: none;
+}
+
+.ds-map-trigger:not(.is-custom) .ds-custom-dot {
+  display: none;
+}
+
+/* 禁用态占位胶囊 */
+.ds-btn-empty {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--text-tertiary);
-  line-height: 1;
 }
 
 /* ============================================================
@@ -2997,9 +3025,18 @@ body {
     align-items: center;
   }
 
-  .mapping-table th:nth-child(3),
-  .mapping-table td:nth-child(3) {
-    display: none;
+  /* 窄屏：左列图标缩到 38px，避免两列挤在一起 */
+  .ds-phys-cell {
+    gap: 10px;
+  }
+
+  .ds-phys-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .ds-phys-name {
+    font-size: 13px;
   }
 }
 
