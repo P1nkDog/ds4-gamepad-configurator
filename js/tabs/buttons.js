@@ -17,6 +17,13 @@ import {
     ds4BtnBit,
     formatButtonMask,
 } from './button_map.js';
+import {
+    physicalIconKey,
+    logicalIconKey,
+    iconImg,
+    iconTag,
+    fillMaskTags,
+} from '../utils/button_icons.js';
 
 // 配置组与消抖边界（与固件 Config/config.h 严格一致）
 const GROUP_GAMEPAD_SETTINGS = 2;
@@ -24,11 +31,8 @@ const GROUP_BUTTON_MAP = 4;
 const DEBOUNCE_MAX_MS = 50;
 const DEBOUNCE_DEFAULT_MS = 4;
 
-// 标签芯片样式（内联，复用现有 CSS 变量，避免为几枚 chip 改全局样式表）
-const CHIP_ON = 'padding:2px 8px;border-radius:999px;border:1px solid var(--accent);'
-    + 'background:var(--accent);color:#fff;font-size:12px;cursor:pointer;font-family:inherit;line-height:1.7;';
-const CHIP_OFF = 'padding:2px 8px;border-radius:999px;border:1px solid var(--border);'
-    + 'background:transparent;color:var(--text-primary);font-size:12px;cursor:pointer;font-family:inherit;line-height:1.7;';
+// 标签芯片样式改由全局 CSS 的 .ds-pick / .ds-pick.is-selected 承担，
+// 选中态需要联动图标着色（浅色变黑 / 深色变白），内联样式做不到，故不在 JS 里写死。
 
 // 弹窗内按逻辑分组展示 18 个功能位（bit 序号与固件 Ds4LogicalButton 一致）
 const PICKER_GROUPS = [
@@ -38,13 +42,8 @@ const PICKER_GROUPS = [
     { title: '摇杆与系统键', bits: [13, 14, 15, 16, 17, 18] },
 ];
 
-// 遮罩与弹窗卡片样式：z-index 900 高于 .dialog-overlay(100) 与 .boot-error(300)；
-// 背景取 --bg-card（本仓库变量名，非 --card-bg），深色主题下为 #2c2c2e，完全不透明。
-const OVERLAY_CSS = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:900;'
-    + 'display:flex;align-items:center;justify-content:center;padding:16px;';
-const MODAL_CSS = 'max-width:520px;width:100%;max-height:calc(100vh - 32px);overflow-y:auto;'
-    + 'border-radius:12px;border:1px solid var(--border);background:var(--bg-card, #1e1e22);'
-    + 'padding:20px;box-shadow:0 16px 40px rgba(0,0,0,0.5);';
+// 遮罩与弹窗卡片样式统一交给全局 CSS 的 .combo-picker-overlay / .combo-picker-card
+// （磨砂遮罩、圆角、微阴影随主题走；层级 z-index:900 高于 .dialog-overlay(100) 与 .boot-error(300)）
 
 /**
  * 渲染按键 Tab
@@ -130,35 +129,48 @@ function renderMappingCard(model, ctx) {
     PHYSICAL_BUTTONS.forEach((item, index) => {
         const tr = document.createElement('tr');
 
-        // ---- 第 1 列：名称 + bit/引脚（摘要移到第 2 列，这里不再重复） ----
+        // ---- 第 1 列：图标 + 名称 + bit/引脚（摘要移到第 2 列，这里不再重复） ----
         const tdName = document.createElement('td');
-        tdName.style.whiteSpace = 'nowrap';
+        const nameBox = document.createElement('span');
+        nameBox.className = 'ds-row-name';
+
+        const rowIcon = iconImg(physicalIconKey(item.bit), { size: 22 });
+        if (rowIcon) {
+            rowIcon.classList.add('ds-row-icon');
+            rowIcon.title = item.name;
+            nameBox.appendChild(rowIcon);
+        }
+
+        const textBox = document.createElement('span');
+        textBox.className = 'ds-row-text';
+
         const nameEl = document.createElement('span');
+        nameEl.className = 'ds-row-title';
         nameEl.textContent = item.name;
+
         const pinEl = document.createElement('span');
-        pinEl.textContent = ` bit${item.bit} · ${item.pin}`;
-        pinEl.style.cssText = 'font-size:12px;color:var(--text-secondary);';
-        tdName.appendChild(nameEl);
-        tdName.appendChild(pinEl);
+        pinEl.className = 'ds-row-meta';
+        pinEl.textContent = `bit${item.bit} · ${item.pin}`;
+
+        textBox.appendChild(nameEl);
+        textBox.appendChild(pinEl);
+        nameBox.appendChild(textBox);
+        tdName.appendChild(nameBox);
         tr.appendChild(tdName);
 
-        // ---- 第 2 列：单行紧凑触发按钮（左：当前映射，右：▾ 指示符） ----
+        // ---- 第 2 列：单行紧凑触发按钮（左：当前映射图标组，右：▾ 指示符） ----
         const tdTrigger = document.createElement('td');
         const trigger = document.createElement('button');
         trigger.type = 'button';
+        trigger.className = 'ds-map-trigger';
         trigger.dataset.index = String(index);
-        trigger.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;'
-            + 'width:100%;max-width:420px;padding:5px 10px;border-radius:8px;'
-            + 'font-size:13px;font-family:inherit;text-align:left;cursor:pointer;'
-            + 'background:var(--input-bg);';
 
         const triggerLabel = document.createElement('span');
-        triggerLabel.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;'
-            + 'text-overflow:ellipsis;white-space:nowrap;';
+        triggerLabel.className = 'ds-btn-tags';
 
         const triggerArrow = document.createElement('span');
+        triggerArrow.className = 'ds-map-arrow';
         triggerArrow.textContent = '▾';
-        triggerArrow.style.cssText = 'flex:0 0 auto;font-size:11px;color:var(--text-secondary);';
 
         trigger.appendChild(triggerLabel);
         trigger.appendChild(triggerArrow);
@@ -172,18 +184,21 @@ function renderMappingCard(model, ctx) {
         tdDefault.style.cssText = 'font-size:13px;color:var(--text-secondary);white-space:nowrap;';
         tr.appendChild(tdDefault);
 
-        // 刷新本行触发按钮：文案 / 禁用配色 / 自定义边框高亮
+        // 刷新本行触发按钮：图标组 / 禁用配色 / 自定义边框高亮
         function refresh() {
             const m = (Number(model.buttonMap[index]) & DS4_LOGICAL_MASK_ALL) >>> 0;
             const def = (Number(DEFAULT_BUTTON_MASKS[index]) & DS4_LOGICAL_MASK_ALL) >>> 0;
             const disabled = (m === 0);
             const custom = (m !== def);
 
-            triggerLabel.textContent = formatButtonMask(m);
+            fillMaskTags(triggerLabel, 'logical', m, '无（禁用）', (bit) => {
+                const fb = DS4_LOGICAL_BUTTONS.find((x) => x.bit === bit);
+                return fb ? fb.short : `bit${bit}`;
+            });
             trigger.dataset.mask = String(m);
             trigger.title = `点击编辑：${formatButtonMask(m)}`;
-            trigger.style.border = `1px solid ${custom ? 'var(--accent)' : 'var(--border)'}`;
-            trigger.style.color = disabled ? 'var(--text-secondary)' : 'var(--text-primary)';
+            trigger.classList.toggle('is-custom', custom);
+            trigger.classList.toggle('is-disabled', disabled);
         }
         refresh();
         refreshers.push(refresh);
@@ -215,38 +230,45 @@ function openComboPickerModal(index, model, markDirty, onApply) {
 
     const overlay = document.createElement('div');
     overlay.className = 'combo-picker-overlay';
-    overlay.style.cssText = OVERLAY_CSS;
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
 
     const card = document.createElement('div');
     card.className = 'combo-picker-card';
-    card.style.cssText = MODAL_CSS;
 
-    // ---- 头部：标题 + 副标（bit/引脚） + 关闭 ----
+    // ---- 头部：图标 + 标题 + 副标（bit/引脚） + 关闭 ----
     const head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:12px;';
+    head.className = 'combo-picker-head';
 
     const titleBox = document.createElement('div');
-    titleBox.style.cssText = 'min-width:0;';
+    titleBox.className = 'combo-picker-title-box';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'combo-picker-title-row';
+
+    const headIcon = iconImg(physicalIconKey(phys.bit), { size: 30 });
+    if (headIcon) {
+        headIcon.classList.add('ds-picker-icon');
+        titleRow.appendChild(headIcon);
+    }
 
     const title = document.createElement('h3');
+    title.className = 'combo-picker-title';
     title.textContent = `配置按键映射 · ${phys.name}`;
-    title.style.cssText = 'margin:0 0 4px;font-size:16px;';
+    titleRow.appendChild(title);
 
     const sub = document.createElement('span');
+    sub.className = 'combo-picker-sub';
     sub.textContent = `bit${phys.bit} · ${phys.pin}`;
-    sub.style.cssText = 'font-size:12px;color:var(--text-secondary);';
 
-    titleBox.appendChild(title);
+    titleBox.appendChild(titleRow);
     titleBox.appendChild(sub);
 
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
+    closeBtn.className = 'combo-picker-close';
     closeBtn.textContent = '×';
     closeBtn.title = '关闭（Esc）';
-    closeBtn.style.cssText = 'flex:0 0 auto;width:28px;height:28px;border:none;background:transparent;'
-        + 'color:var(--text-secondary);font-size:20px;line-height:1;cursor:pointer;font-family:inherit;';
 
     head.appendChild(titleBox);
     head.appendChild(closeBtn);
@@ -254,16 +276,14 @@ function openComboPickerModal(index, model, markDirty, onApply) {
 
     // ---- 当前组合实时预览条 ----
     const preview = document.createElement('div');
-    preview.style.cssText = 'display:flex;align-items:center;gap:6px;margin:14px 0 4px;padding:8px 12px;'
-        + 'border:1px solid var(--border);border-radius:8px;background:var(--bg-primary);'
-        + 'font-size:13px;flex-wrap:wrap;';
+    preview.className = 'combo-picker-preview';
 
     const previewLabel = document.createElement('span');
+    previewLabel.className = 'combo-picker-preview-label';
     previewLabel.textContent = '当前触发：';
-    previewLabel.style.cssText = 'color:var(--text-secondary);';
 
-    const previewValue = document.createElement('b');
-    previewValue.style.cssText = 'color:var(--text-primary);';
+    const previewValue = document.createElement('span');
+    previewValue.className = 'ds-btn-tags combo-picker-preview-value';
 
     preview.appendChild(previewLabel);
     preview.appendChild(previewValue);
@@ -273,14 +293,14 @@ function openComboPickerModal(index, model, markDirty, onApply) {
     const chips = [];
     for (const group of PICKER_GROUPS) {
         const section = document.createElement('div');
-        section.style.cssText = 'margin-top:12px;';
+        section.className = 'combo-picker-group';
 
         const groupLabel = document.createElement('div');
+        groupLabel.className = 'combo-picker-group-title';
         groupLabel.textContent = group.title;
-        groupLabel.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-bottom:6px;';
 
         const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+        wrap.className = 'combo-picker-chips';
 
         for (const bitNo of group.bits) {
             const fb = DS4_LOGICAL_BUTTONS.find((x) => x.bit === bitNo);
@@ -289,10 +309,14 @@ function openComboPickerModal(index, model, markDirty, onApply) {
             const bit = ds4BtnBit(fb.bit);
             const chip = document.createElement('button');
             chip.type = 'button';
+            chip.className = 'ds-pick';
             chip.dataset.bit = String(fb.bit);
-            chip.textContent = fb.short;
             chip.title = fb.label;
+            chip.setAttribute('aria-pressed', 'false');
             chip._bit = bit;
+            // 18 个逻辑位全部有图标：方向/动作键只显示图标（图标本身即字形），
+            // 肩键/系统键的线框图标不可辨，配一枚精简文字。
+            chip.appendChild(iconTag(logicalIconKey(fb.bit), fb.short, { size: 22 }));
             chip.addEventListener('click', () => toggle(bit));
             chips.push(chip);
             wrap.appendChild(chip);
@@ -305,11 +329,10 @@ function openComboPickerModal(index, model, markDirty, onApply) {
 
     // ---- 底部操作栏 ----
     const footer = document.createElement('div');
-    footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;'
-        + 'margin-top:18px;flex-wrap:wrap;';
+    footer.className = 'combo-picker-footer';
 
     const leftGroup = document.createElement('div');
-    leftGroup.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    leftGroup.className = 'combo-picker-footer-left';
 
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
@@ -361,11 +384,15 @@ function openComboPickerModal(index, model, markDirty, onApply) {
     function refresh() {
         const m = currentMask();
         for (const chip of chips) {
-            chip.style.cssText = ((m & chip._bit) !== 0) ? CHIP_ON : CHIP_OFF;
+            const on = (m & chip._bit) !== 0;
+            chip.classList.toggle('is-selected', on);
+            chip.setAttribute('aria-pressed', on ? 'true' : 'false');
         }
-        previewValue.textContent = formatButtonMask(m);
-        previewValue.style.color = (m === 0) ? 'var(--text-secondary)' : 'var(--text-primary)';
-        notify();   // 同步表格该行的触发按钮（文案 / 配色 / 边框）
+        fillMaskTags(previewValue, 'logical', m, '无（禁用）', (bit) => {
+            const fb = DS4_LOGICAL_BUTTONS.find((x) => x.bit === bit);
+            return fb ? fb.short : `bit${bit}`;
+        });
+        notify();   // 同步表格该行的触发按钮（图标组 / 配色 / 边框）
         return m;
     }
 

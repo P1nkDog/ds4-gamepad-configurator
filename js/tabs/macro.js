@@ -21,6 +21,12 @@ import {
     ds4BtnBit,
     formatButtonMask,
 } from './button_map.js';
+import {
+    physicalIconKey,
+    logicalIconKey,
+    iconTag,
+    fillMaskTags,
+} from '../utils/button_icons.js';
 
 //--------------------------------------------------------------------+
 // 字节级常量（与固件 Config/config.h 严格一致）
@@ -501,8 +507,14 @@ function refreshSlotCards() {
 
         const trigger = document.createElement('div');
         trigger.className = 'macro-slot-trigger';
-        trigger.textContent = slotTriggerText(slot);
         trigger.title = slotTriggerText(slot);
+        // 槽位卡片同样用图标表达触发键，与触发条件区 / 选择弹窗保持同一套视觉语言
+        const triggerTags = document.createElement('span');
+        triggerTags.className = 'ds-btn-tags';
+        fillMaskTags(triggerTags, 'physical', slot.triggerMask, '未绑定',
+            (bit) => (PHYSICAL_BUTTONS[bit] ? shortPhysName(PHYSICAL_BUTTONS[bit].name) : `bit${bit}`),
+            { max: 3 });
+        trigger.appendChild(triggerTags);
         card.appendChild(trigger);
 
         const meta = document.createElement('div');
@@ -574,7 +586,13 @@ function refreshTriggerSection() {
     triggerBtn.type = 'button';
     triggerBtn.className = 'macro-trigger-btn';
     const bound = ((Number(slot.triggerMask) & MACRO_TRIGGER_MASK_ALL) >>> 0) !== 0;
-    triggerBtn.textContent = slotTriggerText(slot);
+    // 触发键是 26 路物理键位掩码 → 用物理位图标表（与按键映射表同一套图形语言）
+    const triggerTags = document.createElement('span');
+    triggerTags.className = 'ds-btn-tags';
+    fillMaskTags(triggerTags, 'physical', slot.triggerMask, '未绑定',
+        (bit) => (PHYSICAL_BUTTONS[bit] ? shortPhysName(PHYSICAL_BUTTONS[bit].name) : `bit${bit}`),
+        { max: 4 });
+    triggerBtn.appendChild(triggerTags);
     triggerBtn.classList.toggle('is-empty', !bound);
     triggerBtn.title = '点击选择触发物理按键（支持单键或组合键）';
     triggerBtn.addEventListener('click', () => openPhysicalPicker());
@@ -719,6 +737,8 @@ function openPhysicalPicker() {
         })),
         getMask: () => (Number(slot.triggerMask) & MACRO_TRIGGER_MASK_ALL) >>> 0,
         bitValue: (bit) => (1 << bit) >>> 0,
+        // 触发键 = 物理位序，查 PHYSICAL 图标表
+        iconOf: (bit) => physicalIconKey(bit),
         // 掩码 → 文案（物理键走槽位摘要，逻辑键走 DS4 逻辑功能名）
         formatMask: (mask) => (mask === 0 ? '未绑定' : slotTriggerText({ triggerMask: mask })),
         onToggle: (bit) => {
@@ -754,6 +774,8 @@ function openLogicalPicker(stepIndex) {
         })),
         getMask: () => (Number(step.mask) & DS4_LOGICAL_MASK_ALL) >>> 0,
         bitValue: (bit) => ds4BtnBit(bit),
+        // 步内 mask = DS4 逻辑位序，查 LOGICAL 图标表
+        iconOf: (bit) => logicalIconKey(bit),
         formatMask: (mask) => (mask === 0 ? '无（纯延时等待）' : formatButtonMask(mask)),
         onToggle: (bit) => {
             step.mask = (((Number(step.mask) & DS4_LOGICAL_MASK_ALL) ^ ds4BtnBit(bit)) & DS4_LOGICAL_MASK_ALL) >>> 0;
@@ -839,10 +861,13 @@ function openBitPicker(opts) {
             const bitValue = opts.bitValue(item.bit);
             const chip = document.createElement('button');
             chip.type = 'button';
-            chip.className = 'macro-chip';
-            chip.textContent = item.short;
+            chip.className = 'macro-chip ds-pick';
             chip.title = item.label;
+            chip.setAttribute('aria-pressed', 'false');
             chip._bit = bitValue;
+            // 物理键 / 逻辑键两套位序各自查表，由调用方通过 iconOf 注入
+            const chipIconKey = (typeof opts.iconOf === 'function') ? opts.iconOf(item.bit) : null;
+            chip.appendChild(iconTag(chipIconKey, item.short, { size: 22 }));
             chip.addEventListener('click', () => {
                 opts.onToggle(item.bit);
                 refresh();
@@ -883,7 +908,10 @@ function openBitPicker(opts) {
     function refresh() {
         const mask = opts.getMask();
         for (const chip of chips) {
-            chip.classList.toggle('on', (mask & chip._bit) !== 0);
+            const on = (mask & chip._bit) !== 0;
+            chip.classList.toggle('on', on);
+            chip.classList.toggle('is-selected', on);
+            chip.setAttribute('aria-pressed', on ? 'true' : 'false');
         }
         previewValue.textContent = opts.formatMask ? opts.formatMask(mask) : String(mask);
         previewValue.classList.toggle('is-empty', mask === 0);
@@ -1321,8 +1349,16 @@ function buildStepRow(slot, index, count) {
     const maskBtn = document.createElement('button');
     maskBtn.type = 'button';
     maskBtn.className = 'macro-step-mask';
-    const maskText = () => (step.mask === 0 ? '无（纯延时等待）' : formatButtonMask(step.mask));
-    maskBtn.textContent = maskText();
+    // 步内 mask 是 DS4 逻辑位 → 用逻辑位图标表，与多选弹窗完全一致
+    const maskTags = document.createElement('span');
+    maskTags.className = 'ds-btn-tags';
+    fillMaskTags(maskTags, 'logical', step.mask, '无（纯延时等待）',
+        (bit) => {
+            const fb = DS4_LOGICAL_BUTTONS.find((x) => x.bit === bit);
+            return fb ? fb.short : `bit${bit}`;
+        },
+        { max: 4 });
+    maskBtn.appendChild(maskTags);
     maskBtn.title = '点击选择本步输出的 DS4 逻辑按键';
     maskBtn.classList.toggle('is-empty', step.mask === 0);
     maskBtn.addEventListener('click', () => openLogicalPicker(index));
