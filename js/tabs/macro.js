@@ -859,15 +859,18 @@ function openBitPicker(opts) {
 
         for (const item of group.items) {
             const bitValue = opts.bitValue(item.bit);
+            // 物理键 / 逻辑键两套位序各自查表，由调用方通过 iconOf 注入
+            const chipIconKey = (typeof opts.iconOf === 'function') ? opts.iconOf(item.bit) : null;
             const chip = document.createElement('button');
             chip.type = 'button';
-            chip.className = 'macro-chip ds-pick';
+            // 18 枚标准按键 → 44px 正圆按钮；BTN1~BTN8 无图标 → 文字胶囊（避免文字被圆形裁切）
+            chip.className = chipIconKey
+                ? 'macro-chip ds-pick ds-pick-circle'
+                : 'macro-chip ds-pick ds-pick-text';
             chip.title = item.label;
             chip.setAttribute('aria-pressed', 'false');
             chip._bit = bitValue;
-            // 物理键 / 逻辑键两套位序各自查表，由调用方通过 iconOf 注入
-            const chipIconKey = (typeof opts.iconOf === 'function') ? opts.iconOf(item.bit) : null;
-            chip.appendChild(iconTag(chipIconKey, item.short, { size: 22 }));
+            chip.appendChild(iconTag(chipIconKey, item.short, { size: 50 }));
             chip.addEventListener('click', () => {
                 opts.onToggle(item.bit);
                 refresh();

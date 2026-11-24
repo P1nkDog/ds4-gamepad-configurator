@@ -1223,14 +1223,15 @@ body {
 
 /* ============================================================
    按键图标（18 枚透明底 PNG）
-   常态 = 原图粉色；选中态 = 浅色主题纯黑 / 深色主题纯白
+   上层图标**恒定原图粉色**：任何主题、任何选中状态都不加滤镜。
+   选中反馈改由「底层正圆反色」承担，见后文 .ds-pick-circle 一节。
    ============================================================ */
 .ds-btn-icon {
   display: block;
   flex: none;
   object-fit: contain;
   filter: none;
-  transition: filter 0.16s ease, transform 0.16s ease;
+  transition: transform 0.16s ease;
 }
 
 /* 图标容器：一行排开的图标组 */
@@ -1275,39 +1276,7 @@ body {
   color: var(--text-tertiary);
 }
 
-/* ---- 选中态：图标转纯黑（浅色主题） ---- */
-.ds-btn-icon.is-selected,
-.ds-pick.is-selected .ds-btn-icon,
-.ds-pick.selected .ds-btn-icon,
-.ds-pick.active .ds-btn-icon,
-.ds-pick[aria-pressed="true"] .ds-btn-icon,
-.macro-chip.on .ds-btn-icon,
-.macro-chip.selected .ds-btn-icon,
-.macro-chip.active .ds-btn-icon,
-.macro-chip[aria-pressed="true"] .ds-btn-icon {
-  filter: brightness(0);
-}
-
-/* ---- 选中态：图标转纯白（深色主题） ---- */
-[data-theme="dark"] .ds-btn-icon.is-selected,
-[data-theme="dark"] .ds-pick.is-selected .ds-btn-icon,
-[data-theme="dark"] .ds-pick.selected .ds-btn-icon,
-[data-theme="dark"] .ds-pick.active .ds-btn-icon,
-[data-theme="dark"] .ds-pick[aria-pressed="true"] .ds-btn-icon,
-[data-theme="dark"] .macro-chip.on .ds-btn-icon,
-[data-theme="dark"] .macro-chip.selected .ds-btn-icon,
-[data-theme="dark"] .macro-chip.active .ds-btn-icon,
-[data-theme="dark"] .macro-chip[aria-pressed="true"] .ds-btn-icon {
-  filter: brightness(0) invert(1);
-}
-
-/* 选中态下配文字一起反色，保证同一枚胶囊内的对比度 */
-.ds-pick.is-selected .ds-btn-tag-text,
-.macro-chip.on .ds-btn-tag-text {
-  color: var(--text-primary);
-}
-
-/* ---- 可点选的图标胶囊（多选弹窗芯片） ---- */
+/* ---- 可点选的标签（文字芯片：BTN1~BTN8 等无图标的键） ---- */
 .ds-pick {
   display: inline-flex;
   align-items: center;
@@ -1331,14 +1300,29 @@ body {
   transform: translateY(-1px);
 }
 
-.ds-pick.is-selected {
-  background: var(--ds-select-surface);
-  border-color: var(--ds-select-border);
-  box-shadow: var(--ds-select-shadow);
+.ds-pick-text {
+  width: auto;
+  height: auto;
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  white-space: nowrap;
 }
 
-.ds-pick.is-selected:hover {
-  border-color: var(--ds-select-border);
+/* 文字芯片选中态：同样走反色（浅色黑底白字 / 深色白底黑字），与正圆按钮一致 */
+.ds-pick-text.is-selected,
+.macro-chip.ds-pick-text.on {
+  background: #000000;
+  border-color: #000000;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .ds-pick-text.is-selected,
+[data-theme="dark"] .macro-chip.ds-pick-text.on {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
 }
 
 /* ============================================================
@@ -2258,11 +2242,14 @@ body {
 .macro-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  align-items: center;
+  gap: 14px;
 }
 
+/* 宏弹窗里的芯片：18 枚标准键走 .ds-pick-circle（50px 正圆），
+   BTN1~BTN8 走 .ds-pick-text（文字胶囊），这里只保留文字芯片的兜底外观 */
 .macro-chip {
-  padding: 7px 12px;
+  padding: 7px 14px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: transparent;
@@ -2280,11 +2267,18 @@ body {
   transform: translateY(-1px);
 }
 
-/* 选中态与 .ds-pick.is-selected 保持一致：浅色白底黑图标 / 深色黑底白图标 */
-.macro-chip.on {
-  background: var(--ds-select-surface);
-  border-color: var(--ds-select-border);
-  box-shadow: var(--ds-select-shadow);
+/* 文字芯片选中态：浅色黑底白字 / 深色白底黑字（与正圆按钮同一套反色语言） */
+.macro-chip.ds-pick-text.on {
+  background: #000000;
+  border-color: #000000;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .macro-chip.ds-pick-text.on {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
 }
 
 .macro-picker-footer {
@@ -2421,7 +2415,8 @@ body {
 .combo-picker-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 14px;
 }
 
 .combo-picker-footer {
@@ -2437,6 +2432,120 @@ body {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* ============================================================
+   18 枚按键的「50px 正圆按钮」（两个多选弹窗共用）
+   ------------------------------------------------------------
+   叠层结构（三层同心，从下到上）：
+     ① .ds-pick-circle::before  48×48 选底盘（1px 内缩，压在粉色环笔画正下方）
+     ② .ds-pick-circle          50×50 透明外框，自身永不着色
+     ③ .ds-btn-icon             50×50 图标，恒定原图粉色，永不加滤镜
+
+   为什么不再用 overflow:hidden + 45px 图标：
+     45px 图标放进 44px 圆形裁切框，理论上是"四周各溢出 0.5px"，
+     但浏览器会先把图片位置吸附到整设备像素，吸附方向在四个象限并不一致，
+     结果右下角被多裁掉一点，圆环看着偏细（亚像素裁切不可控）。
+     改成"图标与容器等大 44px + 不裁切"，完整保留 PNG 自带抗锯齿环体；
+     选中底盘改用 48px 内缩伪元素，边缘落在环笔画内部，
+     既不会顶到环外露缝，也不会盖住环的外沿。
+   ============================================================ */
+.ds-pick-circle {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  flex: 0 0 auto;
+  line-height: 0;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.16s ease, box-shadow 0.18s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 选中底盘：单边内缩 1px 的同心圆，只用它承载黑/白反色 */
+.ds-pick-circle::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  z-index: 0;
+  background: transparent;
+  transition: background 0.18s ease;
+  pointer-events: none;
+}
+
+/* 悬停：轻微放大 + 柔和微光，不加任何描边 */
+.ds-pick-circle:hover {
+  border: none;
+  transform: scale(1.06);
+  box-shadow: 0 0 0 6px rgba(255, 107, 157, 0.1);
+}
+
+/* 上层图标：与容器等大，压在底盘之上（z-index 1） */
+.ds-pick-circle .ds-btn-icon {
+  width: 50px;
+  height: 50px;
+  max-width: none;
+  position: relative;
+  z-index: 1;
+  filter: none;
+}
+
+.ds-pick-circle .ds-btn-tag,
+.ds-pick-circle .ds-btn-tag.has-icon {
+  gap: 0;
+}
+
+/* 未选中 = 默认态（透明 + 无边框），由上面的基础规则保证，
+   这里不再用 :not() 重复声明，否则会以更高优先级压掉 hover 的微光。 */
+
+/* 浅色主题选中：底盘纯黑（外框始终透明） */
+.ds-pick-circle.is-selected,
+.macro-chip.ds-pick-circle.on,
+.ds-pick-circle[aria-pressed="true"] {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.ds-pick-circle.is-selected::before,
+.macro-chip.ds-pick-circle.on::before,
+.ds-pick-circle[aria-pressed="true"]::before {
+  background: #000000;
+}
+
+/* 深色主题选中：底盘纯白（外框始终透明） */
+[data-theme="dark"] .ds-pick-circle.is-selected,
+[data-theme="dark"] .macro-chip.ds-pick-circle.on,
+[data-theme="dark"] .ds-pick-circle[aria-pressed="true"] {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .ds-pick-circle.is-selected::before,
+[data-theme="dark"] .macro-chip.ds-pick-circle.on::before,
+[data-theme="dark"] .ds-pick-circle[aria-pressed="true"]::before {
+  background: #ffffff;
+}
+
+/* 选中态下 hover 不再叠加粉色微光，避免污染纯黑/纯白底盘 */
+.ds-pick-circle.is-selected:hover,
+.macro-chip.ds-pick-circle.on:hover {
+  box-shadow: none;
 }
 
 /* ============================================================

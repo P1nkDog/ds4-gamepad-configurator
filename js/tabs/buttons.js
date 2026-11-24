@@ -309,14 +309,14 @@ function openComboPickerModal(index, model, markDirty, onApply) {
             const bit = ds4BtnBit(fb.bit);
             const chip = document.createElement('button');
             chip.type = 'button';
-            chip.className = 'ds-pick';
+            chip.className = 'ds-pick ds-pick-circle';
             chip.dataset.bit = String(fb.bit);
             chip.title = fb.label;
             chip.setAttribute('aria-pressed', 'false');
             chip._bit = bit;
-            // 18 个逻辑位全部有图标：方向/动作键只显示图标（图标本身即字形），
-            // 肩键/系统键的线框图标不可辨，配一枚精简文字。
-            chip.appendChild(iconTag(logicalIconKey(fb.bit), fb.short, { size: 22 }));
+            // 18 个逻辑位全部有图标 → 一律渲染成 44px 正圆按钮；
+            // 图标本身就把键名画在环内，不再叠文字。
+            chip.appendChild(iconTag(logicalIconKey(fb.bit), fb.short, { size: 50 }));
             chip.addEventListener('click', () => toggle(bit));
             chips.push(chip);
             wrap.appendChild(chip);

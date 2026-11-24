@@ -97,8 +97,8 @@ export function iconTag(key, fallbackText, opt) {
     if (img) {
         tag.appendChild(img);
         tag.classList.add('has-icon');
-        // 图标是装饰性的，可读名称由外层元素的 title / 文本承担，避免读屏重复播报
-        if (fallbackText) tag.title = fallbackText;
+        // 图标是装饰性的；可读名称交给外层按钮/单元格的 title，
+        // 这里再挂一层 title 会在嵌套元素上抢先弹出，把外层的完整说明顶掉。
     } else {
         const span = document.createElement('span');
         span.className = 'ds-btn-tag-text';
